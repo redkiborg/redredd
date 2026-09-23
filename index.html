@@ -117,6 +117,38 @@
   .chip .x { color: #818384; padding: 0 4px; }
   .chip .x:hover { color: #fff; }
   .empty { font-size: 13px; color: #818384; }
+  .qrow { align-items: center; margin: 4px 0; }
+  .qrow span { flex: 0 0 auto; font-size: 14px; }
+  #feed.locked { overflow: hidden; }
+  .quiz { background: radial-gradient(circle at 30% 20%, #2b2d6e, #120c24 70%); display: flex; align-items: center; justify-content: center; }
+  .qcard { width: calc(100% - 28px); max-height: calc(100dvh - 90px); margin-top: 40px; overflow-y: auto; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: 18px; padding: 18px; }
+  .qhead { font-size: 13px; opacity: .7; margin-bottom: 10px; }
+  .qq { font-size: 20px; font-weight: 700; line-height: 1.3; margin-bottom: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .qsub { font-size: 13px; opacity: .7; margin-bottom: 10px; }
+  .qimg { width: 100%; max-height: 30dvh; object-fit: contain; border-radius: 10px; margin-bottom: 12px; }
+  .qopt { display: block; width: 100%; text-align: left; background: rgba(255,255,255,.08); color: #fff; border: 2px solid transparent; border-radius: 12px; padding: 12px 14px; font-size: 15px; margin-bottom: 8px; cursor: pointer; }
+  .qopt.sel { border-color: #6c8cff; background: rgba(108,140,255,.18); }
+  .qopt.right, .qitem.right, .qinput.right, .qline.right .qtok { border-color: #2ecc71; background: rgba(46,204,113,.18); }
+  .qopt.wrong, .qitem.wrong, .qinput.wrong, .qline.wrong .qtok { border-color: #ff4d4f; background: rgba(255,77,79,.18); }
+  .qinput { width: 100%; background: rgba(255,255,255,.08); color: #fff; border: 2px solid rgba(255,255,255,.15); border-radius: 12px; padding: 12px; font-size: 16px; font-family: inherit; }
+  .qorder { list-style: none; margin: 0; padding: 0; }
+  .qitem { display: flex; gap: 10px; align-items: center; background: rgba(255,255,255,.08); border: 2px solid transparent; border-radius: 12px; padding: 12px; margin-bottom: 8px; touch-action: none; cursor: grab; user-select: none; }
+  .qitem .h { opacity: .5; }
+  .qitem.drag { opacity: .6; border-color: #6c8cff; }
+  .qline { min-height: 52px; border-bottom: 2px solid rgba(255,255,255,.2); display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 0 10px; margin-bottom: 16px; }
+  .qbank { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .qtok { background: #2a2a3a; color: #fff; border: 2px solid rgba(255,255,255,.18); border-bottom-width: 4px; border-radius: 12px; padding: 8px 12px; font-size: 15px; cursor: pointer; }
+  .qtok.used { visibility: hidden; }
+  .qbtns { display: flex; gap: 8px; margin-top: 16px; }
+  .qbtns button { flex: 1; border: 0; border-radius: 22px; padding: 12px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .qcheck, .qnext { background: #58cc02; color: #fff; }
+  .qcheck:disabled { background: #3a3a3a; color: #888; cursor: default; }
+  .qbtns .qskip { flex: 0 0 auto; background: rgba(255,255,255,.1); color: #fff; padding: 12px 18px; }
+  .qres { margin-top: 14px; padding: 12px; border-radius: 12px; font-size: 15px; line-height: 1.4; }
+  .qres.ok { background: rgba(46,204,113,.15); }
+  .qres.bad { background: rgba(255,77,79,.15); }
+  .qres .ans { margin-top: 6px; white-space: pre-wrap; }
+  .qres .exp { opacity: .85; margin-top: 8px; white-space: pre-wrap; }
   .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); background: #333; color: #fff; padding: 8px 16px; border-radius: 16px; font-size: 14px; z-index: 50; opacity: 0; transition: opacity .3s; pointer-events: none; }
   .toast.show { opacity: 1; }
 </style>
@@ -171,6 +203,17 @@
     <label><input type="checkbox" id="fdup"> Hide reposts and duplicates</label>
     <button class="sbtn" id="clearseen">Forget seen posts</button>
 
+    <h4>Learning mode</h4>
+    <label><input type="checkbox" id="qon"> Show quizzes in the feed</label>
+    <div class="two qrow"><span>Every</span><select id="qevery">
+      <option value="3">3 posts</option><option value="5">5 posts</option><option value="10">10 posts</option>
+      <option value="15">15 posts</option><option value="20">20 posts</option><option value="30">30 posts</option>
+    </select></div>
+    <label><input type="checkbox" id="qforce"> Must answer to continue</label>
+    <div class="two"><button class="sbtn" id="qfile">Load quiz file</button><button class="sbtn" id="qreset">Reset progress</button></div>
+    <input type="file" id="qfileinput" accept=".json,application/json" hidden>
+    <div class="empty" id="qinfo" style="margin-top:8px"></div>
+
     <button class="bigbtn" id="apply">Apply</button>
     <button class="sbtn" id="rand" style="width:100%">🎲 Random subreddit</button>
 
@@ -211,7 +254,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('rf_' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
 };
-const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww' }, store.get('cfg', {}));
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true }, store.get('cfg', {}));
 let pins = store.get('pins', []);
 let hist = store.get('hist', []);
 let seen = new Set(store.get('seen', []));
@@ -352,8 +395,8 @@ function openFeed(src) {
   closeDrawer(); closeSheet();
   src.name = (src.name || '').trim().replace(/^\/?(r|u|user)\//i, '');
   if (!src.name && src.kind !== 'likes') return;
-  F = { src, source: makeSource(src), range: src.kind === 'likes' ? { from: 0, to: Infinity } : range(), ids: new Set(), keys: new Set(), posts: [], end: false, loading: false };
-  feed.innerHTML = ''; feed.scrollTop = 0;
+  F = { src, source: makeSource(src), range: src.kind === 'likes' ? { from: 0, to: Infinity } : range(), ids: new Set(), keys: new Set(), posts: [], end: false, loading: false, since: 0 };
+  unlockFeed(); feed.innerHTML = ''; feed.scrollTop = 0;
   $('#q').value = src.kind === 'likes' ? '❤ My likes' : (src.kind === 'user' ? 'u/' : 'r/') + src.name;
   if (src.kind === 'sub') { cfg.last = src.name; saveCfg(); addHist(src.name); }
   updatePinBtn();
@@ -396,6 +439,7 @@ function appendSlide(p) {
   F.posts.push(p);
   feed.appendChild(el);
   io.observe(el);
+  if (quizActive() && ++F.since >= cfg.quizEvery) { F.since = 0; appendQuiz(); }
 }
 
 function mediaOf(p) {
@@ -544,6 +588,7 @@ const io = new IntersectionObserver(entries => {
     const sl = e.target, v = sl.querySelector('video');
     if (e.isIntersecting) {
       sl.classList.add('active');
+      if (sl.classList.contains('quiz')) { if (!sl.dataset.done && cfg.quizForce) lockFeed(sl); continue; }
       const p = F?.posts[+sl.dataset.i];
       if (p) markSeen(p.id);
       if (v) { loadVideo(v); v.play().catch(() => {}); sl.querySelector('.vidwrap')?.classList.remove('paused'); }
@@ -656,6 +701,7 @@ function openDrawer() {
   $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe;
   $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
   $('#likesopen').textContent = `❤ My likes (${likes.length})`;
+  $('#qon').checked = cfg.quizOn; $('#qevery').value = String(cfg.quizEvery); $('#qforce').checked = cfg.quizForce; renderQInfo();
   syncT(); renderLists();
   $('#drawer').classList.add('show'); $('#dover').classList.add('show');
 }
@@ -695,8 +741,10 @@ $('#apply').onclick = () => {
   let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
   $('#ffrom').value = from; $('#fto').value = to;
   if (from && to && from > to) [from, to] = [to, from];
-  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked });
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked,
+    quizOn: $('#qon').checked, quizEvery: +$('#qevery').value, quizForce: $('#qforce').checked });
   saveCfg(); updateDot();
+  if (cfg.quizOn && !quiz) toast('Load a quiz file first');
   openFeed(F ? { ...F.src } : { kind: 'sub', name: cfg.last });
 };
 
@@ -739,7 +787,7 @@ $('#rand').onclick = async () => {
 };
 
 $('#exp').onclick = async () => {
-  const code = btoa(unescape(encodeURIComponent(JSON.stringify({ v: 1, cfg, pins, hist, likes, seen: [...seen].slice(-3000) }))));
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify({ v: 1, cfg, pins, hist, likes, quiz, qstats, seen: [...seen].slice(-3000) }))));
   $('#synctext').value = code;
   try { await navigator.clipboard.writeText(code); toast('Code copied'); } catch { $('#synctext').select(); toast('Copy the code from the box'); }
 };
@@ -752,6 +800,8 @@ $('#imp').onclick = () => {
     const have = new Set(likes.map(x => x.id));
     likes = [...likes, ...(d.likes || []).filter(x => !have.has(x.id))].sort((a, b) => (b.liked_at || 0) - (a.liked_at || 0));
     store.set('likes', likes); liked = likedIds();
+    if (d.quiz) { quiz = d.quiz; store.set('quiz', quiz); }
+    if (d.qstats) { qstats = { ...qstats, ...d.qstats }; store.set('qstats', qstats); }
     Object.assign(cfg, d.cfg || {});
     store.set('pins', pins); store.set('hist', hist); store.set('seen', [...seen].slice(-5000)); saveCfg();
     renderLists(); updateDot(); updatePinBtn(); toast('Loaded');
@@ -771,6 +821,7 @@ document.addEventListener('keydown', e => {
   if (e.target.matches('input, select, textarea')) return;
   if (e.key === 'Escape') { closeSheet(); closeDrawer(); return; }
   if ($('#sheet').classList.contains('show') || $('#drawer').classList.contains('show')) return;
+  if (feed.classList.contains('locked')) return;
   const h = feed.clientHeight;
   if (e.key === 'ArrowDown') { e.preventDefault(); feed.scrollBy({ top: h, behavior: 'smooth' }); }
   if (e.key === 'ArrowUp') { e.preventDefault(); feed.scrollBy({ top: -h, behavior: 'smooth' }); }
@@ -779,6 +830,229 @@ document.addEventListener('keydown', e => {
   if (car && e.key === 'ArrowLeft') car.scrollBy({ left: -car.clientWidth, behavior: 'smooth' });
   if (e.key === ' ') { e.preventDefault(); document.querySelector('.slide.active .vidwrap')?.click(); }
 });
+
+let quiz = store.get('quiz', null);
+let qstats = store.get('qstats', {});
+let qrecent = [];
+const quizActive = () => cfg.quizOn && quiz?.questions?.length;
+function qid(q) {
+  if (q.id != null) return String(q.id);
+  let h = 0; const s = q.type + '|' + q.question;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return 'h' + (h >>> 0).toString(36);
+}
+const toList = x => x == null ? [] : Array.isArray(x) ? x : [x];
+function normQuiz(data) {
+  const list = Array.isArray(data) ? data : data?.questions;
+  if (!Array.isArray(list)) throw new Error('no "questions" array');
+  const out = [];
+  for (const raw of list) {
+    const q = { ...raw, type: String(raw.type || 'choice').toLowerCase() };
+    if (!q.question) continue;
+    if (q.type === 'choice' || q.type === 'multi') {
+      if (!Array.isArray(q.options) || q.options.length < 2) continue;
+      q.options = q.options.map(String);
+      q.answer = toList(q.answer).map(x => typeof x === 'number' ? x : q.options.indexOf(String(x))).filter(i => i >= 0 && i < q.options.length);
+      if (!q.answer.length) continue;
+      if (q.answer.length > 1) q.type = 'multi';
+    } else if (q.type === 'input') {
+      q.answer = toList(q.answer).map(String);
+      if (!q.answer.length) continue;
+    } else if (q.type === 'order') {
+      if (!Array.isArray(q.items) || q.items.length < 2) continue;
+      q.items = q.items.map(String);
+    } else if (q.type === 'build') {
+      q.tokens = typeof q.answer === 'string' ? q.answer.trim().split(/\s+/) : toList(q.answer).map(String);
+      if (!q.tokens.length) continue;
+      q.alts = [q.tokens.join(' '), ...toList(q.alternatives).map(x => Array.isArray(x) ? x.join(' ') : String(x))];
+      q.extra = toList(q.extra).map(String);
+      const have = [...q.tokens, ...q.extra];
+      for (const alt of q.alts.slice(1)) {
+        const pool = [...have];
+        for (const w of alt.split(/\s+/)) { const i = pool.indexOf(w); if (i >= 0) pool.splice(i, 1); else { q.extra.push(w); have.push(w); } }
+      }
+    } else continue;
+    q.id = qid(q);
+    out.push(q);
+  }
+  if (!out.length) throw new Error('no valid questions');
+  return { title: data.title || 'Quiz', questions: out };
+}
+function setQuiz(data) {
+  quiz = normQuiz(data);
+  store.set('quiz', quiz);
+  renderQInfo();
+}
+function renderQInfo() {
+  const el = $('#qinfo');
+  if (!quiz) { el.textContent = 'No quiz loaded'; return; }
+  const ids = new Set(quiz.questions.map(q => q.id));
+  let n = 0, ok = 0;
+  for (const [k, s] of Object.entries(qstats)) if (ids.has(k)) { n += s.n; ok += s.ok; }
+  el.textContent = `${quiz.title}: ${quiz.questions.length} questions · answered ${n}` + (n ? ` · ${Math.round(ok / n * 100)}% correct` : '');
+}
+function pickQuestion() {
+  const qs = quiz.questions;
+  let pool = qs.filter(q => !qrecent.includes(q.id));
+  if (!pool.length) pool = qs;
+  const w = pool.map(q => { const s = qstats[q.id]; return !s ? 3 : s.last === false ? 5 : 1 / (1 + s.ok); });
+  let r = Math.random() * w.reduce((a, b) => a + b, 0), i = 0;
+  while (i < pool.length - 1 && (r -= w[i]) > 0) i++;
+  const q = pool[i];
+  qrecent = [...qrecent, q.id].slice(-Math.min(5, qs.length - 1));
+  return q;
+}
+function appendQuiz() {
+  const el = buildQuiz(pickQuestion());
+  feed.appendChild(el);
+  io.observe(el);
+}
+const qnorm = (s, cs) => { s = String(s).trim().replace(/\s+/g, ' ').replace(/[.!?,;:]+$/, ''); return cs ? s : s.toLowerCase(); };
+function shuffledDiff(a) {
+  if (a.length < 2) return [...a];
+  for (let k = 0; k < 10; k++) { const s = shuffle([...a]); if (s.some((x, i) => x !== a[i])) return s; }
+  return [...a].reverse();
+}
+function makeSortable(list) {
+  let drag = null;
+  list.addEventListener('pointerdown', e => {
+    const it = e.target.closest('.qitem');
+    if (!it || list.dataset.done) return;
+    drag = it; it.classList.add('drag'); it.setPointerCapture(e.pointerId);
+  });
+  list.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.qitem');
+    if (!over || over === drag || over.parentNode !== list) return;
+    const r = over.getBoundingClientRect();
+    list.insertBefore(drag, e.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+  });
+  const end = () => { drag?.classList.remove('drag'); drag = null; };
+  list.addEventListener('pointerup', end);
+  list.addEventListener('pointercancel', end);
+}
+function buildQuiz(q) {
+  const el = document.createElement('div');
+  el.className = 'slide quiz';
+  el.innerHTML = `<div class="qcard">
+    <div class="qhead">🧠 ${esc(quiz.title)}</div>
+    ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="">` : ''}
+    <div class="qq">${esc(q.question)}</div>
+    <div class="qbody"></div>
+    <div class="qres" hidden></div>
+    <div class="qbtns">
+      ${cfg.quizForce ? '' : '<button class="qskip">Skip</button>'}
+      <button class="qcheck" disabled>Check</button>
+      <button class="qnext" hidden>Continue ↓</button>
+    </div>
+  </div>`;
+  const body = el.querySelector('.qbody'), check = el.querySelector('.qcheck');
+  const ready = v => { check.disabled = !v; };
+  let grade, correctText;
+
+  if (q.type === 'choice' || q.type === 'multi') {
+    const order = q.shuffle === false ? q.options.map((_, i) => i) : shuffle(q.options.map((_, i) => i));
+    body.innerHTML = (q.type === 'multi' ? '<div class="qsub">Select all that apply</div>' : '')
+      + order.map(i => `<button class="qopt" data-i="${i}">${esc(q.options[i])}</button>`).join('');
+    const sel = new Set();
+    body.onclick = e => {
+      const b = e.target.closest('.qopt'); if (!b || el.dataset.done) return;
+      const i = +b.dataset.i;
+      if (q.type === 'choice') { sel.clear(); sel.add(i); }
+      else sel.has(i) ? sel.delete(i) : sel.add(i);
+      body.querySelectorAll('.qopt').forEach(x => x.classList.toggle('sel', sel.has(+x.dataset.i)));
+      ready(sel.size);
+    };
+    grade = () => {
+      body.querySelectorAll('.qopt').forEach(x => {
+        const i = +x.dataset.i;
+        if (q.answer.includes(i)) x.classList.add('right'); else if (sel.has(i)) x.classList.add('wrong');
+      });
+      return sel.size === q.answer.length && q.answer.every(i => sel.has(i));
+    };
+    correctText = q.answer.map(i => q.options[i]).join(', ');
+  } else if (q.type === 'input') {
+    body.innerHTML = `<input class="qinput" placeholder="Your answer" autocomplete="off" autocapitalize="off">`;
+    const inp = body.querySelector('input');
+    inp.oninput = () => ready(inp.value.trim());
+    inp.onkeydown = e => { if (e.key === 'Enter' && !check.disabled) check.click(); };
+    grade = () => {
+      inp.disabled = true;
+      const ok = q.answer.some(a => qnorm(a, q.caseSensitive) === qnorm(inp.value, q.caseSensitive));
+      inp.classList.add(ok ? 'right' : 'wrong');
+      return ok;
+    };
+    correctText = q.answer[0];
+  } else if (q.type === 'order') {
+    body.innerHTML = '<div class="qsub">Drag to put in the right order</div><ul class="qorder">'
+      + shuffledDiff(q.items.map((_, i) => i)).map(i => `<li class="qitem" data-i="${i}"><span class="h">≡</span><span>${esc(q.items[i])}</span></li>`).join('') + '</ul>';
+    const list = body.querySelector('.qorder');
+    makeSortable(list);
+    ready(true);
+    grade = () => {
+      list.dataset.done = 1;
+      let ok = true;
+      [...list.children].forEach((li, pos) => { const r = +li.dataset.i === pos; li.classList.add(r ? 'right' : 'wrong'); ok &&= r; });
+      return ok;
+    };
+    correctText = q.items.map((x, i) => `${i + 1}. ${x}`).join('\n');
+  } else if (q.type === 'build') {
+    const toks = shuffle([...q.tokens, ...q.extra].map((t, k) => ({ t, k })));
+    body.innerHTML = `<div class="qline"></div><div class="qbank">${toks.map(o => `<button class="qtok" data-k="${o.k}">${esc(o.t)}</button>`).join('')}</div>`;
+    const line = body.querySelector('.qline'), bank = body.querySelector('.qbank');
+    bank.onclick = e => {
+      const b = e.target.closest('.qtok'); if (!b || b.classList.contains('used') || el.dataset.done) return;
+      b.classList.add('used');
+      const c = b.cloneNode(true); c.classList.remove('used');
+      line.appendChild(c); ready(line.children.length);
+    };
+    line.onclick = e => {
+      const c = e.target.closest('.qtok'); if (!c || el.dataset.done) return;
+      bank.querySelector(`.qtok[data-k="${c.dataset.k}"]`).classList.remove('used');
+      c.remove(); ready(line.children.length);
+    };
+    grade = () => {
+      const s = [...line.children].map(c => c.textContent).join(' ');
+      const ok = q.alts.some(a => qnorm(a, q.caseSensitive) === qnorm(s, q.caseSensitive));
+      line.classList.add(ok ? 'right' : 'wrong');
+      return ok;
+    };
+    correctText = q.tokens.join(' ');
+  }
+
+  const res = el.querySelector('.qres'), next = el.querySelector('.qnext'), skip = el.querySelector('.qskip');
+  const finish = ok => {
+    el.dataset.done = 1;
+    check.hidden = true; if (skip) skip.hidden = true; next.hidden = false;
+    if (ok !== null) {
+      const s = qstats[q.id] || { n: 0, ok: 0 };
+      s.n++; if (ok) s.ok++; s.last = ok;
+      qstats[q.id] = s; store.set('qstats', qstats);
+      res.hidden = false;
+      res.className = 'qres ' + (ok ? 'ok' : 'bad');
+      res.innerHTML = (ok ? '<b>✅ Correct!</b>' : `<b>❌ Not quite.</b><div class="ans">Correct answer:<br>${esc(correctText)}</div>`)
+        + (q.explanation ? `<div class="exp">${esc(q.explanation)}</div>` : '');
+    }
+    unlockFeed();
+  };
+  check.onclick = () => finish(grade());
+  if (skip) skip.onclick = () => { finish(null); next.click(); };
+  next.onclick = () => feed.scrollBy({ top: feed.clientHeight, behavior: 'smooth' });
+  return el;
+}
+function lockFeed(sl) {
+  feed.scrollTo({ top: sl.offsetTop, behavior: 'smooth' });
+  feed.classList.add('locked');
+}
+function unlockFeed() { feed.classList.remove('locked'); }
+$('#qfile').onclick = () => $('#qfileinput').click();
+$('#qfileinput').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { setQuiz(JSON.parse(await f.text())); toast(`Quiz loaded: ${quiz.questions.length} questions`); }
+  catch (err) { toast('Bad quiz file: ' + err.message); }
+  e.target.value = '';
+};
+$('#qreset').onclick = () => { qstats = {}; store.set('qstats', {}); renderQInfo(); toast('Progress reset'); };
 
 updateDot();
 openFeed({ kind: 'sub', name: cfg.last || 'aww' });
