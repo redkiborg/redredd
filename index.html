@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#000000">
+<title>Reddit Feed</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; }
+  button { font-family: inherit; }
+  #app { position: relative; height: 100dvh; width: min(100vw, calc(100dvh * 9 / 16)); margin: 0 auto; background: #000; }
+  @media (max-width: 600px) { #app { width: 100vw; } }
+
+  .top { position: absolute; top: 0; left: 0; right: 0; z-index: 10; padding: 10px 10px 24px; display: flex; gap: 6px; align-items: center; background: linear-gradient(rgba(0,0,0,.65), transparent); }
+  .top form { flex: 1; min-width: 0; display: flex; }
+  .top input { flex: 1; min-width: 0; background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 18px; padding: 7px 12px; font-size: 14px; }
+  .ib { position: relative; background: rgba(255,255,255,.15); border: 0; color: #fff; border-radius: 50%; width: 34px; height: 34px; cursor: pointer; font-size: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
+  .ib.on { color: #ffd23f; }
+  .ib .dot { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: #ff4500; display: none; }
+  .ib .dot.show { display: block; }
+
+  #feed { height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; }
+  #feed::-webkit-scrollbar { display: none; }
+  .slide { position: relative; height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; background: #000; }
+  .msg { height: 100dvh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #bbb; line-height: 1.5; scroll-snap-align: start; }
+
+  .media { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .bg { position: absolute; inset: -30px; background-size: cover; background-position: center; filter: blur(26px) brightness(.4); }
+  .media img, .media video, .cell img { position: relative; width: 100%; height: 100%; object-fit: contain; }
+  .vidwrap { position: absolute; inset: 0; cursor: pointer; }
+  .vidwrap.paused::after { content: "▶"; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 64px; opacity: .8; pointer-events: none; }
+  .vidwrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  .vload { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 13px; opacity: .7; pointer-events: none; }
+  .prog { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: #fff; z-index: 6; }
+  .carousel { position: absolute; inset: 0; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .carousel::-webkit-scrollbar { display: none; }
+  .cell { position: relative; flex: 0 0 100%; height: 100%; scroll-snap-align: center; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .count { position: absolute; top: 62px; right: 12px; z-index: 5; background: rgba(0,0,0,.5); padding: 3px 9px; border-radius: 12px; font-size: 12px; }
+  .nav { position: absolute; top: 50%; z-index: 5; transform: translateY(-50%); background: rgba(0,0,0,.4); border: 0; color: #fff; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 18px; }
+  .nav.prev { left: 8px; } .nav.next { right: 70px; }
+  .textpost { position: absolute; inset: 0; padding: 80px 76px 150px 20px; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(160deg, #1d3557, #3c1f55 60%, #5a1e3a); }
+  .textpost h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.25; }
+  .textpost .body { overflow-y: auto; white-space: pre-wrap; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+  .textpost .domain { margin-top: 10px; color: #9cd3ff; font-size: 14px; }
+
+  .shade { position: absolute; left: 0; right: 0; bottom: 0; height: 45%; background: linear-gradient(transparent, rgba(0,0,0,.8)); pointer-events: none; }
+  .caption { position: absolute; left: 0; right: 68px; bottom: 0; padding: 14px 14px 18px; z-index: 5; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  .caption .who { font-size: 13px; }
+  .caption .who a { color: #fff; font-weight: 700; font-size: 15px; cursor: pointer; }
+  .caption .who a.sub { font-weight: 600; font-size: 13px; opacity: .85; }
+  .caption .who span { opacity: .7; }
+  .caption .title { font-weight: 600; font-size: 15px; margin: 6px 0 4px; line-height: 1.3; }
+  .caption .desc { font-size: 14px; opacity: .92; white-space: pre-wrap; line-height: 1.4; overflow-wrap: anywhere; }
+  .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .caption.open .clamp { display: block; }
+  .caption.open .scroll { max-height: 40dvh; overflow-y: auto; }
+  .caption a.link { color: #9cd3ff; font-size: 13px; text-decoration: none; }
+  .more { background: none; border: 0; color: #fff; font-weight: 700; padding: 2px 0; cursor: pointer; font-size: 14px; opacity: .9; }
+  .side { position: absolute; right: 8px; bottom: 110px; z-index: 5; display: flex; flex-direction: column; gap: 16px; align-items: center; }
+  .btn { background: none; border: 0; color: #fff; display: flex; flex-direction: column; align-items: center; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; text-shadow: 0 1px 2px #000; }
+  .btn .ic { width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.16); display: flex; align-items: center; justify-content: center; margin-bottom: 4px; }
+  .btn svg { width: 25px; height: 25px; fill: #fff; }
+  .btn.like.on svg { fill: #fe2c55; }
+  .btn.like.pop .ic { animation: pop .3s; }
+  @keyframes pop { 50% { transform: scale(1.25); } }
+  .bigbtn.likesbtn { background: #fe2c55; }
+
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 20; }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  #sheet { position: fixed; left: 50%; bottom: 0; width: min(100vw, 600px); height: 75dvh; transform: translate(-50%, 100%); transition: transform .3s ease; background: #1a1a1b; color: #d7dadc; border-radius: 14px 14px 0 0; z-index: 21; display: flex; flex-direction: column; }
+  #sheet.show { transform: translate(-50%, 0); }
+  .sheet-head { padding: 14px 48px; text-align: center; font-weight: 700; font-size: 14px; border-bottom: 1px solid #343536; position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sheet-head button { position: absolute; top: 6px; border: 0; background: none; font-size: 22px; cursor: pointer; color: #aaa; width: 36px; height: 36px; }
+  #sback { left: 6px; } #sclose { right: 6px; }
+  #sbody { flex: 1; overflow-y: auto; padding: 4px 16px 30px; }
+  .c { margin-top: 12px; }
+  .c .m { font-size: 12px; color: #818384; }
+  .c .m a { color: #d7dadc; font-weight: 700; cursor: pointer; }
+  .c .b { font-size: 14px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 2px; }
+  .c .kids { margin-left: 4px; padding-left: 12px; border-left: 2px solid #343536; }
+  .cmsg { text-align: center; color: #818384; padding: 30px 0; }
+
+  .prof { display: flex; gap: 14px; align-items: center; padding: 16px 0 10px; }
+  .prof img { width: 64px; height: 64px; border-radius: 50%; background: #333; object-fit: cover; }
+  .prof h3 { margin: 0 0 4px; font-size: 18px; color: #fff; }
+  .prof .st { font-size: 13px; color: #818384; line-height: 1.5; }
+  .bigbtn { display: block; width: 100%; background: #ff4500; color: #fff; border: 0; border-radius: 20px; padding: 10px; font-size: 15px; font-weight: 600; cursor: pointer; margin: 8px 0 4px; }
+  h4 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #818384; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #2a2a2b; cursor: pointer; font-size: 14px; }
+  .row b { color: #fff; }
+  .row span { color: #818384; font-size: 13px; }
+  .ucm { padding: 10px 0; border-bottom: 1px solid #2a2a2b; cursor: pointer; }
+  .ucm .t { font-size: 13px; font-weight: 600; color: #fff; margin: 2px 0; }
+  .ucm .b { font-size: 14px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ucm .m { font-size: 12px; color: #818384; }
+
+  #drawer { position: fixed; top: 0; left: 0; bottom: 0; width: min(88vw, 360px); background: #1a1a1b; color: #d7dadc; z-index: 31; transform: translateX(-100%); transition: transform .3s ease; display: flex; flex-direction: column; }
+  #drawer.show { transform: none; }
+  #dover { z-index: 30; }
+  .dhead { padding: 14px 16px; font-weight: 700; border-bottom: 1px solid #343536; display: flex; justify-content: space-between; align-items: center; }
+  .dhead button { background: none; border: 0; color: #aaa; font-size: 22px; cursor: pointer; }
+  .dbody { flex: 1; overflow-y: auto; padding: 0 16px 30px; }
+  .dbody select, .dbody input, .dbody textarea { width: 100%; background: #272729; color: #d7dadc; border: 1px solid #343536; border-radius: 8px; padding: 8px; font-size: 14px; font-family: inherit; color-scheme: dark; }
+  .two { display: flex; gap: 8px; }
+  .two > * { flex: 1; min-width: 0; }
+  .dt { position: relative; }
+  .dt input:not(.pick) { padding-right: 34px; }
+  .cal { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); background: none; border: 0; cursor: pointer; font-size: 15px; padding: 4px; }
+  .pick { position: absolute; left: 0; bottom: 0; width: 100% !important; height: 0 !important; padding: 0 !important; border: 0 !important; opacity: 0; pointer-events: none; }
+  .dbody label input { width: auto; }
+  .dbody label { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 8px 0; cursor: pointer; }
+    .sbtn { background: #272729; color: #d7dadc; border: 1px solid #343536; border-radius: 16px; padding: 6px 12px; font-size: 13px; cursor: pointer; margin-top: 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #272729; border: 1px solid #343536; border-radius: 16px; padding: 5px 6px 5px 11px; font-size: 13px; cursor: pointer; }
+  .chip .x { color: #818384; padding: 0 4px; }
+  .chip .x:hover { color: #fff; }
+  .empty { font-size: 13px; color: #818384; }
+  .toast { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%); background: #333; color: #fff; padding: 8px 16px; border-radius: 16px; font-size: 14px; z-index: 50; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="top">
+    <button class="ib" id="menu">☰<span class="dot" id="fdot"></span></button>
+    <form id="form"><input id="q" placeholder="subreddit or u/user" autocomplete="off" autocapitalize="off"></form>
+    <button class="ib" id="pin">☆</button>
+    <button class="ib" id="mute">🔇</button>
+  </div>
+  <div id="feed"></div>
+</div>
+
+<div class="overlay" id="sover"></div>
+<div id="sheet">
+  <div class="sheet-head"><button id="sback" hidden>‹</button><span id="stitle"></span><button id="sclose">×</button></div>
+  <div id="sbody"></div>
+</div>
+
+<div class="overlay" id="dover"></div>
+<aside id="drawer">
+  <div class="dhead">Filters & saved <button id="dclose">×</button></div>
+  <div class="dbody">
+    <button class="bigbtn likesbtn" id="likesopen">❤ My likes</button>
+    <h4>Sort</h4>
+    <div class="two">
+      <select id="fsort">
+        <option value="hot">Hot</option>
+        <option value="new">New</option>
+        <option value="top">Top</option>
+        <option value="rising">Rising</option>
+        <option value="controversial">Controversial</option>
+        <option value="random">🎲 Random</option>
+      </select>
+      <select id="ft">
+        <option value="day">today</option>
+        <option value="week">this week</option>
+        <option value="month">this month</option>
+        <option value="year">this year</option>
+        <option value="all">all time</option>
+      </select>
+    </div>
+
+    <h4>Date range: from — to</h4>
+    <div class="two"><div class="dt"><input id="ffrom" placeholder="From  YYYY-MM-DD" autocomplete="off"><button class="cal" type="button">📅</button><input type="date" class="pick" tabindex="-1"></div><div class="dt"><input id="fto" placeholder="To  YYYY-MM-DD" autocomplete="off"><button class="cal" type="button">📅</button><input type="date" class="pick" tabindex="-1"></div></div>
+    <button class="sbtn" id="fclear">Clear dates</button>
+
+    <h4>Repeats</h4>
+    <label><input type="checkbox" id="fseen"> Hide posts I’ve already seen</label>
+    <label><input type="checkbox" id="fdup"> Hide reposts and duplicates</label>
+    <button class="sbtn" id="clearseen">Forget seen posts</button>
+
+    <button class="bigbtn" id="apply">Apply</button>
+    <button class="sbtn" id="rand" style="width:100%">🎲 Random subreddit</button>
+
+    <h4>Pinned</h4>
+    <div class="chips" id="pinlist"></div>
+
+    <h4>History</h4>
+    <div class="chips" id="histlist"></div>
+    <button class="sbtn" id="clearhist">Clear history</button>
+
+    <h4>Move to another device</h4>
+    <textarea id="synctext" rows="3" placeholder="Code"></textarea>
+    <div class="two"><button class="sbtn" id="exp">Copy code</button><button class="sbtn" id="imp">Load from code</button></div>
+  </div>
+</aside>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const feed = $('#feed');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const un = s => s == null ? s : String(s).replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n;
+function ago(t) {
+  const s = Date.now() / 1000 - t;
+  if (s < 60) return 'now';
+  for (const [k, n] of [[31536000, 'y'], [2592000, 'mo'], [86400, 'd'], [3600, 'h'], [60, 'm']]) if (s >= k) return Math.floor(s / k) + n;
+}
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('show'), 1800); }
+const ICON = {
+  heart: '<svg viewBox="0 0 24 24"><path d="M12 21.4 10.6 20C5.4 15.4 2 12.3 2 8.5 2 5.4 4.4 3 7.5 3c1.7 0 3.4.8 4.5 2.1C13.1 3.8 14.8 3 16.5 3 19.6 3 22 5.4 22 8.5c0 3.8-3.4 6.9-8.6 11.5z"/></svg>',
+  comment: '<svg viewBox="0 0 24 24"><path d="M4 3h16a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/></svg>',
+  open: '<svg viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.4l-8.3 8.3-1.4-1.4L17.6 5H14zM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>',
+};
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('rf_' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
+};
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww' }, store.get('cfg', {}));
+let pins = store.get('pins', []);
+let hist = store.get('hist', []);
+let seen = new Set(store.get('seen', []));
+let likes = store.get('likes', []);
+const likedIds = () => new Set(likes.map(p => p.id));
+let liked = likedIds();
+function slim(p) {
+  if (!p) return p;
+  const o = {};
+  for (const k of ['id', 'title', 'author', 'subreddit', 'score', 'num_comments', 'permalink', 'created_utc', 'is_self', 'selftext',
+    'url', 'post_hint', 'domain', 'thumbnail', 'is_gallery', 'gallery_data']) if (p[k] !== undefined) o[k] = p[k];
+  if (p.media_metadata) o.media_metadata = Object.fromEntries(Object.entries(p.media_metadata).map(([k, m]) => [k, { status: m.status, m: m.m, s: m.s }]));
+  const rv = x => x && { fallback_url: x.fallback_url, has_audio: x.has_audio };
+  if (p.secure_media?.reddit_video) o.secure_media = { reddit_video: rv(p.secure_media.reddit_video) };
+  else if (p.media?.reddit_video) o.media = { reddit_video: rv(p.media.reddit_video) };
+  const src = p.preview?.images?.[0]?.source?.url, rvp = p.preview?.reddit_video_preview;
+  if (src || rvp) o.preview = { ...(src ? { images: [{ source: { url: src } }] } : {}), ...(rvp ? { reddit_video_preview: rv(rvp) } : {}) };
+  if (p.crosspost_parent_list?.[0]) o.crosspost_parent_list = [slim(p.crosspost_parent_list[0])];
+  return o;
+}
+function toggleLike(p) {
+  if (liked.has(p.id)) likes = likes.filter(x => x.id !== p.id);
+  else likes = [{ ...slim(p), liked_at: Date.now() / 1000 }, ...likes];
+  store.set('likes', likes);
+  liked = likedIds();
+  return liked.has(p.id);
+}
+const saveCfg = () => store.set('cfg', cfg);
+let seenTimer;
+function markSeen(id) {
+  if (seen.has(id)) return;
+  seen.add(id);
+  clearTimeout(seenTimer);
+  seenTimer = setTimeout(() => store.set('seen', [...seen].slice(-5000)), 800);
+}
+
+let jsonpN = 0;
+function jsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cb = 'rcb_' + (++jsonpN) + '_' + Date.now();
+    const s = document.createElement('script');
+    const done = () => { delete window[cb]; s.remove(); clearTimeout(t); };
+    const t = setTimeout(() => { done(); reject(new Error('JSONP timeout')); }, 9000);
+    window[cb] = d => { done(); resolve(d); };
+    s.onerror = () => { done(); reject(new Error('JSONP error')); };
+    s.src = url + (url.includes('?') ? '&' : '?') + 'jsonp=' + cb;
+    document.head.appendChild(s);
+  });
+}
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+const methods = [
+  u => fetchJSON(u),
+  u => jsonp(u),
+  u => fetchJSON('https://corsproxy.io/?url=' + encodeURIComponent(u)),
+  u => fetchJSON('https://api.allorigins.win/raw?url=' + encodeURIComponent(u)),
+];
+let best = 0;
+async function getJSON(url, ok) {
+  let last;
+  for (const i of [best, 0, 1, 2, 3].filter((v, i, a) => a.indexOf(v) === i)) {
+    try { const d = await methods[i](url); if (ok(d)) { best = i; return d; } last = new Error('empty response'); } catch (e) { last = e; }
+  }
+  throw last || new Error('no data');
+}
+const R = (path, params = {}) => `https://www.reddit.com${path}.json?` + new URLSearchParams({ raw_json: '1', ...params });
+
+function listing(path, params) {
+  let after = null, done = false;
+  return {
+    get done() { return done; },
+    async next() {
+      if (done) return [];
+      const d = await getJSON(R(path, { limit: '50', ...params, ...(after ? { after } : {}) }), d => d?.data?.children);
+      after = d.data.after;
+      if (!after) done = true;
+      return d.data.children.filter(c => c.kind === 't3').map(c => c.data);
+    },
+  };
+}
+function makeSource(src) {
+  if (src.kind === 'likes') {
+    let done = false;
+    return { get done() { return done; }, async next() { if (done) return []; done = true; return likes.map(p => structuredClone(p)); } };
+  }
+  const user = src.kind === 'user';
+  const base = user ? `/user/${src.name}/submitted` : `/r/${src.name}`;
+  const L = (sort, t) => user ? listing(base, { sort, ...(t ? { t } : {}) }) : listing(`${base}/${sort}`, t ? { t } : {});
+  if (cfg.from || cfg.to) return L('new');
+  if (cfg.sort === 'random') {
+    const parts = [L('top', 'all'), L('top', 'year'), L('hot')];
+    return {
+      get done() { return parts.every(p => p.done); },
+      async next() { const r = await Promise.all(parts.map(p => p.done ? [] : p.next().catch(() => []))); return shuffle(r.flat()); },
+    };
+  }
+  let sort = cfg.sort;
+  if (user && sort === 'rising') sort = 'new';
+  return L(sort, ['top', 'controversial'].includes(sort) ? cfg.t : null);
+}
+
+let F = null;
+const range = () => ({
+  from: cfg.from ? new Date(cfg.from + 'T00:00:00').getTime() / 1000 : 0,
+  to: cfg.to ? new Date(cfg.to + 'T23:59:59').getTime() / 1000 : Infinity,
+});
+function dupKey(p) {
+  const s = p.crosspost_parent_list?.[0];
+  if (s) return 'id:' + s.id;
+  if (p.is_self) return 't:' + p.title.trim().toLowerCase();
+  return 'u:' + String(un(p.url) || '').split('?')[0].replace(/^https?:\/\/(www\.|i\.|preview\.)?/, '');
+}
+function accept(p) {
+  if (F.ids.has(p.id)) return false;
+  if (F.src.kind === 'likes') { F.ids.add(p.id); return true; }
+  if (p.stickied && F.src.kind === 'sub') return false;
+  if (p.created_utc < F.range.from || p.created_utc > F.range.to) return false;
+  if (cfg.hideSeen && seen.has(p.id)) return false;
+  if (cfg.dedupe) {
+    const k = dupKey(p), k2 = p.crosspost_parent_list?.[0] ? null : 'id:' + p.id;
+    if (F.keys.has(k) || (k2 && F.keys.has(k2))) return false;
+    F.keys.add(k); if (k2) F.keys.add(k2);
+  }
+  F.ids.add(p.id);
+  return true;
+}
+function status(html) {
+  let m = feed.querySelector('.msg');
+  if (!html) { m?.remove(); return; }
+  if (!m) { m = document.createElement('div'); m.className = 'msg'; feed.appendChild(m); }
+  m.innerHTML = html;
+}
+
+function openFeed(src) {
+  closeDrawer(); closeSheet();
+  src.name = (src.name || '').trim().replace(/^\/?(r|u|user)\//i, '');
+  if (!src.name && src.kind !== 'likes') return;
+  F = { src, source: makeSource(src), range: src.kind === 'likes' ? { from: 0, to: Infinity } : range(), ids: new Set(), keys: new Set(), posts: [], end: false, loading: false };
+  feed.innerHTML = ''; feed.scrollTop = 0;
+  $('#q').value = src.kind === 'likes' ? '❤ My likes' : (src.kind === 'user' ? 'u/' : 'r/') + src.name;
+  if (src.kind === 'sub') { cfg.last = src.name; saveCfg(); addHist(src.name); }
+  updatePinBtn();
+  status('Loading…');
+  loadMore();
+}
+
+async function loadMore() {
+  const f = F;
+  if (!f || f.loading || f.end) return;
+  f.loading = true;
+  let added = 0, pages = 0;
+  try {
+    while (added < 6 && pages < 12 && !f.end) {
+      const posts = await f.source.next();
+      if (f !== F) return;
+      pages++;
+      for (const p of posts) if (accept(p)) { appendSlide(p); added++; }
+      if ((cfg.from || cfg.to) && posts.length && Math.min(...posts.map(p => p.created_utc)) < f.range.from) f.end = true;
+      if (f.source.done) f.end = true;
+      if (!f.posts.length && !f.end) status(`Looking for matching posts… pages checked: ${pages}`);
+    }
+  } catch (e) {
+    if (!f.posts.length) status(`Error: ${esc(e.message)}<br>Check the name.`);
+    f.loading = false;
+    return;
+  }
+  f.loading = false;
+  if (f !== F) return;
+  if (!f.posts.length) {
+    if (f.end) status(f.src.kind === 'likes' ? 'No likes yet.<br>Tap ❤ on a post to save it here.' : cfg.from || cfg.to ? 'No posts found in this date range.<br>Reddit only returns about the 1000 newest posts.'
+      : cfg.hideSeen ? 'You’ve seen everything 🙂<br>Turn off “Hide posts I’ve already seen” in the menu.' : 'No posts');
+    else loadMore();
+  } else if (f.end) status(f.src.kind === 'likes' ? `That’s all your likes (${f.posts.length})` : 'No more posts');
+}
+
+function appendSlide(p) {
+  status('');
+  const el = buildSlide(p, F.posts.length);
+  F.posts.push(p);
+  feed.appendChild(el);
+  io.observe(el);
+}
+
+function mediaOf(p) {
+  const s = p.crosspost_parent_list?.[0] || p;
+  const poster = un(s.preview?.images?.[0]?.source?.url) || (/^https?:/.test(s.thumbnail || '') ? s.thumbnail : null);
+  const rv = s.secure_media?.reddit_video || s.media?.reddit_video || s.preview?.reddit_video_preview;
+  if (rv && rv.fallback_url) {
+    const mp4 = un(rv.fallback_url);
+    const base = mp4.split('?')[0].replace(/\/[^/]*$/, '/');
+    const audio = rv.has_audio === false ? [] :
+      ['DASH_AUDIO_128.mp4', 'DASH_AUDIO_64.mp4', 'DASH_audio.mp4', 'CMAF_AUDIO_128.mp4', 'CMAF_AUDIO_64.mp4', 'audio'].map(f => base + f);
+    return { type: 'video', mp4, audio, poster, embed: 'https://embed.reddit.com' + p.permalink + '?embed=true&theme=dark&showmedia=true' };
+  }
+  if (s.is_gallery && s.gallery_data) {
+    const imgs = s.gallery_data.items
+      .map(it => [it.media_id, s.media_metadata?.[it.media_id]])
+      .filter(([, m]) => m && m.status === 'valid')
+      .map(([id, m]) => {
+        const ext = (m.m || 'image/jpg').split('/')[1].replace('jpeg', 'jpg');
+        return { src: `https://i.redd.it/${id}.${ext}`, fb: un(m.s?.u || m.s?.gif || (m.p || []).slice(-1)[0]?.u) };
+      });
+    if (imgs.length > 1) return { type: 'gallery', imgs };
+    if (imgs.length === 1) return { type: 'image', ...imgs[0] };
+  }
+  if (s.post_hint === 'image' || /\.(jpe?g|png|gif|webp)$/i.test(s.url || '')) return { type: 'image', src: un(s.url), fb: poster };
+  if (poster && !s.is_self) return { type: 'image', src: poster, link: un(s.url) };
+  return { type: 'text', link: s.is_self ? null : un(s.url), domain: s.domain };
+}
+
+const img = (src, fb) => `<div class="bg" style="background-image:url('${esc(src)}')${fb ? `, url('${esc(fb)}')` : ''}"></div>`
+  + `<img src="${esc(src)}" ${fb && fb !== src ? `data-fb="${esc(fb)}"` : ''} alt="" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb=''}">`;
+
+function buildSlide(p, i) {
+  p.title = un(p.title); p.selftext = un(p.selftext);
+  const m = mediaOf(p);
+  let media;
+  if (m.type === 'image') media = `<div class="media">${img(m.src, m.fb)}</div>`;
+  else if (m.type === 'gallery') media = `
+    <div class="carousel">${m.imgs.map(u => `<div class="cell">${img(u.src, u.fb)}</div>`).join('')}</div>
+    <div class="count">1/${m.imgs.length}</div>
+    <button class="nav prev">‹</button><button class="nav next">›</button>`;
+  else if (m.type === 'video') media = `
+    <div class="media">
+      ${m.poster ? `<div class="bg" style="background-image:url('${esc(m.poster)}')"></div>` : ''}
+      <div class="vidwrap"><video playsinline loop muted autoplay preload="none" ${m.poster ? `poster="${esc(m.poster)}"` : ''}
+        data-mp4="${esc(m.mp4)}" data-audio="${esc(JSON.stringify(m.audio))}" data-embed="${esc(m.embed)}"></video>
+        <div class="vload">Loading video…</div></div>
+    </div><div class="prog"></div>`;
+  else media = `
+    <div class="textpost">
+      ${p.selftext ? `<div class="body">${esc(p.selftext)}</div>` : `<h2>${esc(p.title)}</h2>`}
+      ${m.link ? `<a class="domain" href="${esc(m.link)}" target="_blank">🔗 ${esc(m.domain)}</a>` : ''}
+    </div>`;
+
+  const desc = m.type !== 'text' && p.selftext ? p.selftext : '';
+  const el = document.createElement('div');
+  el.className = 'slide';
+  el.dataset.i = i;
+  el.innerHTML = `
+    ${media}
+    <div class="shade"></div>
+    <div class="side">
+      <button class="btn like${liked.has(p.id) ? ' on' : ''}"><span class="ic">${ICON.heart}</span>${fmt(p.score)}</button>
+      <button class="btn cm"><span class="ic">${ICON.comment}</span>${fmt(p.num_comments)}</button>
+      <a class="btn" href="https://www.reddit.com${esc(p.permalink)}" target="_blank"><span class="ic">${ICON.open}</span>Reddit</a>
+    </div>
+    <div class="caption">
+      <div class="who"><a data-user="${esc(p.author)}">u/${esc(p.author)}</a> <span>·</span> <a class="sub" data-sub="${esc(p.subreddit)}">r/${esc(p.subreddit)}</a> <span>· ${ago(p.created_utc)}</span></div>
+      <div class="scroll">
+        <div class="title clamp">${esc(p.title)}</div>
+        ${desc ? `<div class="desc clamp">${esc(desc)}</div>` : ''}
+        ${m.link && m.type !== 'text' ? `<a class="link" href="${esc(m.link)}" target="_blank">🔗 ${esc(p.domain)}</a>` : ''}
+      </div>
+      <button class="more" hidden>more</button>
+    </div>`;
+
+  const cap = el.querySelector('.caption'), more = cap.querySelector('.more');
+  requestAnimationFrame(() => { more.hidden = ![...cap.querySelectorAll('.clamp')].some(x => x.scrollHeight > x.clientHeight + 2); });
+  more.onclick = () => { const o = cap.classList.toggle('open'); more.textContent = o ? 'less' : 'more'; };
+  el.querySelector('.cm').onclick = () => openComments(p.permalink, `${fmt(p.num_comments)} comments`);
+  const lb = el.querySelector('.like');
+  lb.onclick = () => {
+    const on = toggleLike(p);
+    lb.classList.toggle('on', on);
+    lb.classList.remove('pop'); void lb.offsetWidth; if (on) lb.classList.add('pop');
+    toast(on ? '❤ Saved to likes' : 'Removed from likes');
+  };
+
+  const car = el.querySelector('.carousel');
+  if (car) {
+    const cnt = el.querySelector('.count'), n = m.imgs.length;
+    car.onscroll = () => { cnt.textContent = (Math.round(car.scrollLeft / car.clientWidth) + 1) + '/' + n; };
+    el.querySelector('.prev').onclick = () => car.scrollBy({ left: -car.clientWidth, behavior: 'smooth' });
+    el.querySelector('.next').onclick = () => car.scrollBy({ left: car.clientWidth, behavior: 'smooth' });
+  }
+
+  const v = el.querySelector('video');
+  if (v) {
+    const wrap = el.querySelector('.vidwrap'), bar = el.querySelector('.prog');
+    wrap.onclick = () => { if (v.paused) { v.play().catch(() => {}); wrap.classList.remove('paused'); } else { v.pause(); wrap.classList.add('paused'); } };
+    v.ontimeupdate = () => {
+      if (v.duration) bar.style.width = (v.currentTime / v.duration * 100) + '%';
+      const a = v._audio; if (a && !a.paused && Math.abs(a.currentTime - v.currentTime) > 0.3) a.currentTime = v.currentTime;
+    };
+    v.onloadeddata = () => wrap.querySelector('.vload')?.remove();
+    v.onplay = v.onplaying = () => { if (!muted) playAudio(v); };
+    v.onpause = v.onwaiting = () => v._audio?.pause();
+    v.onerror = () => {
+      console.warn('video failed:', v.dataset.mp4);
+      wrap.innerHTML = `<iframe src="${esc(v.dataset.embed)}" allow="autoplay; fullscreen" loading="lazy"></iframe>`;
+      wrap.onclick = null;
+    };
+  }
+  return el;
+}
+
+function loadVideo(v) {
+  if (!v || v.dataset.ready) return;
+  v.dataset.ready = 1;
+  v.src = v.dataset.mp4;
+}
+function playAudio(v) {
+  if (v._audio === null) return;
+  if (!v._audio) {
+    const c = JSON.parse(v.dataset.audio || '[]');
+    if (!c.length) { v._audio = null; return; }
+    const a = new Audio(); let k = 0;
+    a.onerror = () => { if (++k < c.length) { a.src = c[k]; if (!v.paused && !muted) { a.currentTime = v.currentTime; a.play().catch(() => {}); } } else v._audio = null; };
+    a.src = c[0];
+    v._audio = a;
+  }
+  v._audio.currentTime = v.currentTime;
+  v._audio.play().catch(() => {});
+}
+let muted = true;
+$('#mute').onclick = () => {
+  muted = !muted;
+  $('#mute').textContent = muted ? '🔇' : '🔊';
+  const v = document.querySelector('.slide.active video');
+  if (muted) document.querySelectorAll('video').forEach(x => x._audio?.pause());
+  else if (v && !v.paused) playAudio(v);
+};
+
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) {
+    const sl = e.target, v = sl.querySelector('video');
+    if (e.isIntersecting) {
+      sl.classList.add('active');
+      const p = F?.posts[+sl.dataset.i];
+      if (p) markSeen(p.id);
+      if (v) { loadVideo(v); v.play().catch(() => {}); sl.querySelector('.vidwrap')?.classList.remove('paused'); }
+      loadVideo(sl.nextElementSibling?.querySelector('video'));
+      if (F && +sl.dataset.i >= F.posts.length - 4) loadMore();
+    } else {
+      sl.classList.remove('active');
+      v?.pause();
+    }
+  }
+}, { root: feed, threshold: 0.6 });
+
+let stack = [];
+function sheetPush(title) {
+  const view = { title, html: '<div class="cmsg">Loading…</div>' };
+  stack.push(view);
+  renderSheet();
+  $('#sheet').classList.add('show'); $('#sover').classList.add('show');
+  return html => { view.html = html; if (stack[stack.length - 1] === view) renderSheet(); };
+}
+function renderSheet() {
+  const v = stack[stack.length - 1];
+  $('#stitle').textContent = v.title;
+  $('#sbody').innerHTML = v.html;
+  $('#sbody').scrollTop = 0;
+  $('#sback').hidden = stack.length < 2;
+}
+function closeSheet() { stack = []; $('#sheet').classList.remove('show'); $('#sover').classList.remove('show'); }
+$('#sover').onclick = closeSheet;
+$('#sclose').onclick = closeSheet;
+$('#sback').onclick = () => { stack.pop(); renderSheet(); };
+
+function renderComments(list, depth = 0) {
+  return list.filter(c => c.kind === 't1').map(c => {
+    const x = c.data, kids = x.replies?.data?.children;
+    const au = x.author && x.author !== '[deleted]' ? `<a data-user="${esc(x.author)}">u/${esc(x.author)}</a>` : `<span>[deleted]</span>`;
+    return `<div class="c">
+      <div class="m">${au} · ${ago(x.created_utc)} · ▲ ${fmt(x.score)}</div>
+      <div class="b">${esc(un(x.body))}</div>
+      ${kids && depth < 5 ? `<div class="kids">${renderComments(kids, depth + 1)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+async function openComments(permalink, title) {
+  const set = sheetPush(title);
+  try {
+    const d = await getJSON(R(permalink.replace(/\/$/, ''), { limit: '80', depth: '5', sort: 'top' }), d => Array.isArray(d) && d[1]?.data);
+    set(renderComments(d[1].data.children) || '<div class="cmsg">No comments yet</div>');
+  } catch (e) { set(`<div class="cmsg">Couldn’t load: ${esc(e.message)}</div>`); }
+}
+
+async function openUser(name) {
+  const set = sheetPush('u/' + name);
+  const [about, posts, comms] = await Promise.allSettled([
+    getJSON(R(`/user/${name}/about`), d => d?.data?.name),
+    getJSON(R(`/user/${name}/submitted`, { limit: '100', sort: 'new' }), d => d?.data?.children),
+    getJSON(R(`/user/${name}/comments`, { limit: '100', sort: 'new' }), d => d?.data?.children),
+  ]);
+  if (about.status !== 'fulfilled' && posts.status !== 'fulfilled') { set('<div class="cmsg">User not found, deleted or suspended.</div>'); return; }
+  const a = about.value?.data || {};
+  const P = posts.value?.data.children.map(c => c.data) || [];
+  const C = comms.value?.data.children.map(c => c.data) || [];
+  const where = {};
+  for (const p of P) (where[p.subreddit] ??= { p: 0, c: 0 }).p++;
+  for (const c of C) (where[c.subreddit] ??= { p: 0, c: 0 }).c++;
+  const rows = Object.entries(where).sort((x, y) => (y[1].p + y[1].c) - (x[1].p + x[1].c));
+  const avatar = un(a.snoovatar_img || a.icon_img || '');
+  const more = n => n >= 100 ? '100+' : n;
+  set(`
+    <div class="prof">
+      ${avatar ? `<img src="${esc(avatar)}" alt="">` : '<img alt="">'}
+      <div>
+        <h3>u/${esc(name)}</h3>
+        <div class="st">
+          ${a.created_utc ? `Redditor for ${ago(a.created_utc)}<br>` : ''}
+          ${a.link_karma != null ? `Karma: ${fmt(a.link_karma)} post · ${fmt(a.comment_karma)} comment<br>` : ''}
+          Recent: ${more(P.length)} post${P.length === 1 ? '' : 's'} · ${more(C.length)} comment${C.length === 1 ? '' : 's'}
+        </div>
+      </div>
+    </div>
+    ${P.length ? `<button class="bigbtn" data-userfeed="${esc(name)}">▶ Watch posts in feed</button>` : ''}
+    <h4>Where they post</h4>
+    ${rows.length ? rows.map(([s, n]) => `<div class="row" data-sub="${esc(s)}"><b>r/${esc(s)}</b><span>${n.p ? n.p + (n.p > 1 ? ' posts' : ' post') : ''}${n.p && n.c ? ' · ' : ''}${n.c ? n.c + (n.c > 1 ? ' comments' : ' comment') : ''}</span></div>`).join('') : '<div class="empty">No data</div>'}
+    <h4>Recent comments</h4>
+    ${C.length ? C.slice(0, 50).map(c => `
+      <div class="ucm" data-thread="${esc(c.permalink)}" data-title="${esc(un(c.link_title))}">
+        <div class="m">r/${esc(c.subreddit)} · ${ago(c.created_utc)} · ▲ ${fmt(c.score)}</div>
+        <div class="t">${esc(un(c.link_title))}</div>
+        <div class="b">${esc(un(c.body))}</div>
+      </div>`).join('') : '<div class="empty">No comments</div>'}
+  `);
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-user],[data-sub],[data-thread],[data-userfeed],[data-pin],[data-unpin],[data-hist]');
+  if (!t) return;
+  e.preventDefault(); e.stopPropagation();
+  const d = t.dataset;
+  if (d.unpin != null) { pins = pins.filter(x => x.toLowerCase() !== d.unpin.toLowerCase()); store.set('pins', pins); renderLists(); updatePinBtn(); return; }
+  if (d.user) return openUser(d.user);
+  if (d.userfeed) return openFeed({ kind: 'user', name: d.userfeed });
+  if (d.thread) return openComments(d.thread, d.title || 'Thread');
+  const sub = d.sub || d.pin || d.hist;
+  if (sub) return openFeed({ kind: 'sub', name: sub });
+}, true);
+
+function openDrawer() {
+  $('#fsort').value = cfg.sort; $('#ft').value = cfg.t;
+  $('#ffrom').value = cfg.from; $('#fto').value = cfg.to;
+  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe;
+  $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
+  $('#likesopen').textContent = `❤ My likes (${likes.length})`;
+  syncT(); renderLists();
+  $('#drawer').classList.add('show'); $('#dover').classList.add('show');
+}
+function closeDrawer() { $('#drawer').classList.remove('show'); $('#dover').classList.remove('show'); }
+function syncT() { const s = $('#fsort').value; $('#ft').disabled = !['top', 'controversial'].includes(s); }
+function updateDot() { $('#fdot').classList.toggle('show', !!(cfg.from || cfg.to || cfg.hideSeen || cfg.sort === 'random')); }
+$('#menu').onclick = openDrawer;
+$('#likesopen').onclick = () => openFeed({ kind: 'likes' });
+$('#dclose').onclick = closeDrawer;
+$('#dover').onclick = closeDrawer;
+$('#fsort').onchange = syncT;
+function parseDate(s) {
+  s = s.trim();
+  let m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/);
+  if (m) return fmtDate(m[1], m[2], m[3]);
+  m = s.match(/^(\d{1,2})[-./](\d{1,2})[-./](\d{4})$/);
+  if (m) return fmtDate(m[3], m[2], m[1]);
+  return '';
+}
+function fmtDate(y, mo, d) {
+  const dt = new Date(+y, mo - 1, +d);
+  if (dt.getMonth() !== mo - 1) return '';
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+document.querySelectorAll('.dt').forEach(w => {
+  const txt = w.querySelector('input:not(.pick)'), pick = w.querySelector('.pick');
+  w.querySelector('.cal').onclick = () => {
+    pick.value = parseDate(txt.value);
+    try { pick.showPicker(); } catch { pick.focus(); pick.click(); }
+  };
+  pick.onchange = () => { txt.value = pick.value; };
+  txt.onblur = () => { if (txt.value) txt.value = parseDate(txt.value) || txt.value; };
+});
+$('#fclear').onclick = () => { $('#ffrom').value = ''; $('#fto').value = ''; };
+$('#clearseen').onclick = () => { seen = new Set(); store.set('seen', []); $('#clearseen').textContent = 'Forget seen posts (0)'; toast('Seen posts cleared'); };
+$('#apply').onclick = () => {
+  let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
+  $('#ffrom').value = from; $('#fto').value = to;
+  if (from && to && from > to) [from, to] = [to, from];
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked });
+  saveCfg(); updateDot();
+  openFeed(F ? { ...F.src } : { kind: 'sub', name: cfg.last });
+};
+
+function addHist(name) {
+  hist = [name, ...hist.filter(x => x.toLowerCase() !== name.toLowerCase())].slice(0, 20);
+  store.set('hist', hist);
+}
+$('#clearhist').onclick = () => { hist = []; store.set('hist', []); renderLists(); };
+function renderLists() {
+  $('#pinlist').innerHTML = pins.length ? pins.map(s => `<span class="chip" data-pin="${esc(s)}">r/${esc(s)}<span class="x" data-unpin="${esc(s)}">×</span></span>`).join('') : '<span class="empty">Empty</span>';
+  $('#histlist').innerHTML = hist.length ? hist.map(s => `<span class="chip" data-hist="${esc(s)}" style="padding-right:11px">r/${esc(s)}</span>`).join('') : '<span class="empty">Empty</span>';
+}
+function isPinned(n) { return pins.some(x => x.toLowerCase() === n.toLowerCase()); }
+function updatePinBtn() {
+  const b = $('#pin'), sub = F?.src.kind === 'sub';
+  b.style.visibility = sub ? 'visible' : 'hidden';
+  const on = sub && isPinned(F.src.name);
+  b.textContent = on ? '★' : '☆'; b.classList.toggle('on', on);
+}
+$('#pin').onclick = () => {
+  if (F?.src.kind !== 'sub') return;
+  const n = F.src.name;
+  if (isPinned(n)) { pins = pins.filter(x => x.toLowerCase() !== n.toLowerCase()); toast('Unpinned'); }
+  else { pins = [n, ...pins]; toast('r/' + n + ' pinned'); }
+  store.set('pins', pins); updatePinBtn();
+};
+
+let popular = null;
+$('#rand').onclick = async () => {
+  $('#rand').textContent = '🎲 Searching…';
+  try {
+    if (!popular) {
+      const d = await getJSON(R('/subreddits/popular', { limit: '100' }), d => d?.data?.children);
+      popular = d.data.children.map(c => c.data).filter(s => !s.over18).map(s => s.display_name);
+    }
+    const pool = popular.filter(s => s !== F?.src.name);
+    openFeed({ kind: 'sub', name: pool[Math.random() * pool.length | 0] });
+  } catch (e) { toast('Didn’t work: ' + e.message); }
+  $('#rand').textContent = '🎲 Random subreddit';
+};
+
+$('#exp').onclick = async () => {
+  const code = btoa(unescape(encodeURIComponent(JSON.stringify({ v: 1, cfg, pins, hist, likes, seen: [...seen].slice(-3000) }))));
+  $('#synctext').value = code;
+  try { await navigator.clipboard.writeText(code); toast('Code copied'); } catch { $('#synctext').select(); toast('Copy the code from the box'); }
+};
+$('#imp').onclick = () => {
+  try {
+    const d = JSON.parse(decodeURIComponent(escape(atob($('#synctext').value.trim()))));
+    pins = [...new Set([...(d.pins || []), ...pins])];
+    hist = [...new Set([...(d.hist || []), ...hist])].slice(0, 20);
+    seen = new Set([...seen, ...(d.seen || [])]);
+    const have = new Set(likes.map(x => x.id));
+    likes = [...likes, ...(d.likes || []).filter(x => !have.has(x.id))].sort((a, b) => (b.liked_at || 0) - (a.liked_at || 0));
+    store.set('likes', likes); liked = likedIds();
+    Object.assign(cfg, d.cfg || {});
+    store.set('pins', pins); store.set('hist', hist); store.set('seen', [...seen].slice(-5000)); saveCfg();
+    renderLists(); updateDot(); updatePinBtn(); toast('Loaded');
+  } catch { toast('Invalid code'); }
+};
+
+$('#form').onsubmit = e => {
+  e.preventDefault();
+  const v = $('#q').value.trim();
+  $('#q').blur();
+  if (/^\/?(u|user)\//i.test(v)) openFeed({ kind: 'user', name: v });
+  else openFeed({ kind: 'sub', name: v });
+};
+$('#q').onfocus = () => $('#q').select();
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea')) return;
+  if (e.key === 'Escape') { closeSheet(); closeDrawer(); return; }
+  if ($('#sheet').classList.contains('show') || $('#drawer').classList.contains('show')) return;
+  const h = feed.clientHeight;
+  if (e.key === 'ArrowDown') { e.preventDefault(); feed.scrollBy({ top: h, behavior: 'smooth' }); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); feed.scrollBy({ top: -h, behavior: 'smooth' }); }
+  const car = document.querySelector('.slide.active .carousel');
+  if (car && e.key === 'ArrowRight') car.scrollBy({ left: car.clientWidth, behavior: 'smooth' });
+  if (car && e.key === 'ArrowLeft') car.scrollBy({ left: -car.clientWidth, behavior: 'smooth' });
+  if (e.key === ' ') { e.preventDefault(); document.querySelector('.slide.active .vidwrap')?.click(); }
+});
+
+updateDot();
+openFeed({ kind: 'sub', name: cfg.last || 'aww' });
+</script>
+</body>
+</html>
