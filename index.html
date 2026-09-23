@@ -27,7 +27,7 @@
   .msg { height: 100dvh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #bbb; line-height: 1.5; scroll-snap-align: start; }
 
   .media { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-  .bg { position: absolute; inset: -30px; background-size: cover; background-position: center; filter: blur(26px) brightness(.4); }
+  .bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .35; }
   .media img, .media video, .cell img { position: relative; width: 100%; height: 100%; object-fit: contain; }
   .vidwrap { position: absolute; inset: 0; cursor: pointer; }
   .vidwrap.paused::after { content: "▶"; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 64px; opacity: .8; pointer-events: none; }
@@ -266,12 +266,14 @@ function slim(p) {
   const o = {};
   for (const k of ['id', 'title', 'author', 'subreddit', 'score', 'num_comments', 'permalink', 'created_utc', 'is_self', 'selftext',
     'url', 'post_hint', 'domain', 'thumbnail', 'is_gallery', 'gallery_data']) if (p[k] !== undefined) o[k] = p[k];
-  if (p.media_metadata) o.media_metadata = Object.fromEntries(Object.entries(p.media_metadata).map(([k, m]) => [k, { status: m.status, m: m.m, s: m.s }]));
+  const keep = (list, w) => { if (!list?.length) return undefined; const ok = list.filter(r => w(r) <= 1080); return [list[0], ...(ok.length > 1 ? [ok[ok.length - 1]] : [])]; };
+  if (p.media_metadata) o.media_metadata = Object.fromEntries(Object.entries(p.media_metadata).map(([k, m]) => [k, { status: m.status, m: m.m, e: m.e, s: m.s, p: keep(m.p, r => r.x) }]));
   const rv = x => x && { fallback_url: x.fallback_url, has_audio: x.has_audio };
   if (p.secure_media?.reddit_video) o.secure_media = { reddit_video: rv(p.secure_media.reddit_video) };
   else if (p.media?.reddit_video) o.media = { reddit_video: rv(p.media.reddit_video) };
   const src = p.preview?.images?.[0]?.source?.url, rvp = p.preview?.reddit_video_preview;
-  if (src || rvp) o.preview = { ...(src ? { images: [{ source: { url: src } }] } : {}), ...(rvp ? { reddit_video_preview: rv(rvp) } : {}) };
+  const res = keep(p.preview?.images?.[0]?.resolutions, r => r.width);
+  if (src || rvp) o.preview = { ...(src ? { images: [{ source: { url: src }, ...(res ? { resolutions: res } : {}) }] } : {}), ...(rvp ? { reddit_video_preview: rv(rvp) } : {}) };
   if (p.crosspost_parent_list?.[0]) o.crosspost_parent_list = [slim(p.crosspost_parent_list[0])];
   return o;
 }
@@ -368,6 +370,7 @@ function dupKey(p) {
   const s = p.crosspost_parent_list?.[0];
   if (s) return 'id:' + s.id;
   if (p.is_self) return 't:' + p.title.trim().toLowerCase();
+  if (!p.url) return 'id:' + p.id;
   return 'u:' + String(un(p.url) || '').split('?')[0].replace(/^https?:\/\/(www\.|i\.|preview\.)?/, '');
 }
 function accept(p) {
@@ -442,16 +445,26 @@ function appendSlide(p) {
   if (quizActive() && ++F.since >= cfg.quizEvery) { F.since = 0; appendQuiz(); }
 }
 
+const MAXW = Math.min(1080, Math.ceil(Math.min(screen.width, 600) * (window.devicePixelRatio || 1)));
+function fitRes(list, get) {
+  const ok = (list || []).filter(r => get(r).w && get(r).w <= MAXW);
+  return ok.length ? un(get(ok[ok.length - 1]).u) : null;
+}
+const tinyRes = (list, get) => list?.length ? un(get(list[0]).u) : null;
 function mediaOf(p) {
   const s = p.crosspost_parent_list?.[0] || p;
-  const poster = un(s.preview?.images?.[0]?.source?.url) || (/^https?:/.test(s.thumbnail || '') ? s.thumbnail : null);
+  const pi = s.preview?.images?.[0];
+  const R = r => ({ u: r.url, w: r.width });
+  const thumb = /^https?:/.test(s.thumbnail || '') ? s.thumbnail : null;
+  const poster = fitRes(pi?.resolutions, R) || un(pi?.source?.url) || thumb;
+  const tiny = tinyRes(pi?.resolutions, R) || thumb;
   const rv = s.secure_media?.reddit_video || s.media?.reddit_video || s.preview?.reddit_video_preview;
   if (rv && rv.fallback_url) {
     const mp4 = un(rv.fallback_url);
     const base = mp4.split('?')[0].replace(/\/[^/]*$/, '/');
     const audio = rv.has_audio === false ? [] :
       ['DASH_AUDIO_128.mp4', 'DASH_AUDIO_64.mp4', 'DASH_audio.mp4', 'CMAF_AUDIO_128.mp4', 'CMAF_AUDIO_64.mp4', 'audio'].map(f => base + f);
-    return { type: 'video', mp4, audio, poster, embed: 'https://embed.reddit.com' + p.permalink + '?embed=true&theme=dark&showmedia=true' };
+    return { type: 'video', mp4, audio, poster, tiny, embed: 'https://embed.reddit.com' + p.permalink + '?embed=true&theme=dark&showmedia=true' };
   }
   if (s.is_gallery && s.gallery_data) {
     const imgs = s.gallery_data.items
@@ -459,32 +472,62 @@ function mediaOf(p) {
       .filter(([, m]) => m && m.status === 'valid')
       .map(([id, m]) => {
         const ext = (m.m || 'image/jpg').split('/')[1].replace('jpeg', 'jpg');
-        return { src: `https://i.redd.it/${id}.${ext}`, fb: un(m.s?.u || m.s?.gif || (m.p || []).slice(-1)[0]?.u) };
+        const direct = `https://i.redd.it/${id}.${ext}`;
+        const P = r => ({ u: r.u, w: r.x });
+        const gif = m.s?.gif || m.e === 'AnimatedImage';
+        const small = gif ? null : fitRes(m.p, P);
+        return { src: small || direct, fb: small ? direct : un(m.s?.u || m.s?.gif) || null, tiny: tinyRes(m.p, P) };
       });
     if (imgs.length > 1) return { type: 'gallery', imgs };
     if (imgs.length === 1) return { type: 'image', ...imgs[0] };
   }
-  if (s.post_hint === 'image' || /\.(jpe?g|png|gif|webp)$/i.test(s.url || '')) return { type: 'image', src: un(s.url), fb: poster };
-  if (poster && !s.is_self) return { type: 'image', src: poster, link: un(s.url) };
+  if (s.post_hint === 'image' || /\.(jpe?g|png|gif|webp)$/i.test(s.url || '')) {
+    const gif = /\.gif$/i.test(s.url || '');
+    const small = gif ? null : fitRes(pi?.resolutions, R);
+    return { type: 'image', src: small || un(s.url), fb: small ? un(s.url) : poster, tiny };
+  }
+  if (poster && !s.is_self) return { type: 'image', src: poster, tiny, link: un(s.url) };
   return { type: 'text', link: s.is_self ? null : un(s.url), domain: s.domain };
 }
 
-const img = (src, fb) => `<div class="bg" style="background-image:url('${esc(src)}')${fb ? `, url('${esc(fb)}')` : ''}"></div>`
-  + `<img src="${esc(src)}" ${fb && fb !== src ? `data-fb="${esc(fb)}"` : ''} alt="" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb=''}">`;
+const img = (src, fb, tiny) => (tiny ? `<div class="bg" data-bg="${esc(tiny)}"></div>` : '')
+  + `<img data-src="${esc(src)}" ${fb && fb !== src ? `data-fb="${esc(fb)}"` : ''} alt="" decoding="async" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb=''}">`;
+function hydrate(sl) {
+  if (sl._h) return; sl._h = true;
+  sl.querySelectorAll('[data-src]').forEach(i => { i.src = i.dataset.src; });
+  sl.querySelectorAll('.bg[data-bg]').forEach(b => { b.style.backgroundImage = `url('${b.dataset.bg}')`; });
+  const v = sl.querySelector('video'); if (v && v.dataset.poster) v.poster = v.dataset.poster;
+}
+function dehydrate(sl) {
+  if (!sl._h) return; sl._h = false;
+  sl.querySelectorAll('img[data-src]').forEach(i => { i.removeAttribute('src'); });
+  sl.querySelectorAll('iframe[data-src]').forEach(f => { f.src = 'about:blank'; });
+  sl.querySelectorAll('.bg[data-bg]').forEach(b => { b.style.backgroundImage = ''; });
+  const v = sl.querySelector('video');
+  if (v) {
+    v.pause(); v._audio?.pause(); v._audio = undefined;
+    if (v.dataset.ready) { v.removeAttribute('src'); v.load(); delete v.dataset.ready; }
+    v.removeAttribute('poster');
+  }
+}
+function window3(active) {
+  const kids = [...feed.children], i = kids.indexOf(active);
+  kids.forEach((sl, k) => { if (!sl.classList.contains('slide')) return; Math.abs(k - i) <= 2 ? hydrate(sl) : dehydrate(sl); });
+}
 
 function buildSlide(p, i) {
   p.title = un(p.title); p.selftext = un(p.selftext);
   const m = mediaOf(p);
   let media;
-  if (m.type === 'image') media = `<div class="media">${img(m.src, m.fb)}</div>`;
+  if (m.type === 'image') media = `<div class="media">${img(m.src, m.fb, m.tiny)}</div>`;
   else if (m.type === 'gallery') media = `
-    <div class="carousel">${m.imgs.map(u => `<div class="cell">${img(u.src, u.fb)}</div>`).join('')}</div>
+    <div class="carousel">${m.imgs.map(u => `<div class="cell">${img(u.src, u.fb, u.tiny)}</div>`).join('')}</div>
     <div class="count">1/${m.imgs.length}</div>
     <button class="nav prev">‹</button><button class="nav next">›</button>`;
   else if (m.type === 'video') media = `
     <div class="media">
-      ${m.poster ? `<div class="bg" style="background-image:url('${esc(m.poster)}')"></div>` : ''}
-      <div class="vidwrap"><video playsinline loop muted autoplay preload="none" ${m.poster ? `poster="${esc(m.poster)}"` : ''}
+      ${m.tiny ? `<div class="bg" data-bg="${esc(m.tiny)}"></div>` : ''}
+      <div class="vidwrap"><video playsinline loop muted preload="none" ${m.poster ? `data-poster="${esc(m.poster)}"` : ''}
         data-mp4="${esc(m.mp4)}" data-audio="${esc(JSON.stringify(m.audio))}" data-embed="${esc(m.embed)}"></video>
         <div class="vload">Loading video…</div></div>
     </div><div class="prog"></div>`;
@@ -548,8 +591,9 @@ function buildSlide(p, i) {
     v.onplay = v.onplaying = () => { if (!muted) playAudio(v); };
     v.onpause = v.onwaiting = () => v._audio?.pause();
     v.onerror = () => {
+      if (!v.getAttribute('src')) return;
       console.warn('video failed:', v.dataset.mp4);
-      wrap.innerHTML = `<iframe src="${esc(v.dataset.embed)}" allow="autoplay; fullscreen" loading="lazy"></iframe>`;
+      wrap.innerHTML = `<iframe src="${esc(v.dataset.embed)}" data-src="${esc(v.dataset.embed)}" allow="autoplay; fullscreen"></iframe>`;
       wrap.onclick = null;
     };
   }
@@ -588,11 +632,11 @@ const io = new IntersectionObserver(entries => {
     const sl = e.target, v = sl.querySelector('video');
     if (e.isIntersecting) {
       sl.classList.add('active');
+      window3(sl);
       if (sl.classList.contains('quiz')) { if (!sl.dataset.done && cfg.quizForce) lockFeed(sl); continue; }
       const p = F?.posts[+sl.dataset.i];
       if (p) markSeen(p.id);
       if (v) { loadVideo(v); v.play().catch(() => {}); sl.querySelector('.vidwrap')?.classList.remove('paused'); }
-      loadVideo(sl.nextElementSibling?.querySelector('video'));
       if (F && +sl.dataset.i >= F.posts.length - 4) loadMore();
     } else {
       sl.classList.remove('active');
