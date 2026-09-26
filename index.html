@@ -25,7 +25,7 @@
   #feed::-webkit-scrollbar { display: none; }
   .slide { position: relative; height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; background: #000; }
   .msg small { font-size: 12px; color: #888; display: block; margin-top: 8px; line-height: 1.5; word-break: break-word; }
-  .msg { height: 100dvh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #bbb; line-height: 1.5; scroll-snap-align: start; }
+  .msg { height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #bbb; line-height: 1.5; scroll-snap-align: start; }
 
   .media { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
   .bg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .35; }
@@ -318,8 +318,8 @@ function jsonp(url) {
     document.head.appendChild(s);
   });
 }
-async function fetchJSON(url, opts) {
-  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
+async function fetchJSON(url, opts, ms = 12000) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
   try {
     const r = await fetch(url, { ...opts, signal: ctl.signal });
     const txt = await r.text();
@@ -353,9 +353,8 @@ const methods = [
   ['api', u => fetchJSON(host(u, 'https://api.reddit.com'))],
   ['old', u => fetchJSON(host(u, 'https://old.reddit.com'))],
   ['jsonp', u => jsonp(u)],
-  ['corsproxy', u => fetchJSON('https://corsproxy.io/?url=' + encodeURIComponent(u))],
-  ['allorigins', async u => { const d = await fetchJSON('https://api.allorigins.win/get?url=' + encodeURIComponent(u)); if (/^\s*</.test(d.contents || '')) throw new Error('blocked (HTML page)'); return JSON.parse(d.contents); }],
-  ['codetabs', u => fetchJSON('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u))],
+  ['allorigins', async u => { const d = await fetchJSON('https://api.allorigins.win/get?url=' + encodeURIComponent(u), {}, 25000); if (/^\s*</.test(d.contents || '')) throw new Error('blocked (HTML page)'); return JSON.parse(d.contents); }],
+  ['codetabs', u => fetchJSON('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u), {}, 25000)],
 ];
 let best = null;
 async function getJSON(url, ok) {
