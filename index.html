@@ -31,6 +31,8 @@
   .media img, .media video, .cell img { position: relative; width: 100%; height: 100%; object-fit: contain; }
   .vidwrap { position: absolute; inset: 0; cursor: pointer; }
   .vidwrap.paused::after { content: "▶"; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 64px; opacity: .8; pointer-events: none; }
+  .litevid { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; color: #fff; text-decoration: none; font-size: 14px; font-weight: 600; text-shadow: 0 1px 3px #000; }
+  .litevid span { width: 72px; height: 72px; border-radius: 50%; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; font-size: 30px; padding-left: 5px; }
   .vidwrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
   .vload { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 13px; opacity: .7; pointer-events: none; }
   .prog { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: #fff; z-index: 6; }
@@ -201,6 +203,9 @@
     <h4>Repeats</h4>
     <label><input type="checkbox" id="fseen"> Hide posts I’ve already seen</label>
     <label><input type="checkbox" id="fdup"> Hide reposts and duplicates</label>
+
+    <h4>Performance</h4>
+    <label><input type="checkbox" id="flite"> Lite mode: no videos, smaller images</label>
     <button class="sbtn" id="clearseen">Forget seen posts</button>
 
     <h4>Learning mode</h4>
@@ -254,7 +259,9 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('rf_' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
 };
-const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true }, store.get('cfg', {}));
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS }, store.get('cfg', {}));
+{ const q = new URLSearchParams(location.search).get('lite'); if (q === '1' || q === '0') cfg.lite = q === '1'; }
 let pins = store.get('pins', []);
 let hist = store.get('hist', []);
 let seen = new Set(store.get('seen', []));
@@ -447,8 +454,10 @@ function appendSlide(p) {
 
 const MAXW = Math.min(1080, Math.ceil(Math.min(screen.width, 600) * (window.devicePixelRatio || 1)));
 function fitRes(list, get) {
-  const ok = (list || []).filter(r => get(r).w && get(r).w <= MAXW);
-  return ok.length ? un(get(ok[ok.length - 1]).u) : null;
+  const cap = cfg.lite ? 640 : 1080, need = Math.min(cap, MAXW);
+  const ok = (list || []).filter(r => get(r).w && get(r).w <= cap);
+  if (!ok.length) return null;
+  return un(get(ok.find(r => get(r).w >= need) || ok[ok.length - 1]).u);
 }
 const tinyRes = (list, get) => list?.length ? un(get(list[0]).u) : null;
 function mediaOf(p) {
@@ -490,11 +499,12 @@ function mediaOf(p) {
   return { type: 'text', link: s.is_self ? null : un(s.url), domain: s.domain };
 }
 
-const img = (src, fb, tiny) => (tiny ? `<div class="bg" data-bg="${esc(tiny)}"></div>` : '')
+const img = (src, fb, tiny) => (tiny && !cfg.lite ? `<div class="bg" data-bg="${esc(tiny)}"></div>` : '')
   + `<img data-src="${esc(src)}" ${fb && fb !== src ? `data-fb="${esc(fb)}"` : ''} alt="" decoding="async" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.dataset.fb=''}">`;
 function hydrate(sl) {
   if (sl._h) return; sl._h = true;
-  sl.querySelectorAll('[data-src]').forEach(i => { i.src = i.dataset.src; });
+  sl.querySelectorAll('[data-src]').forEach(i => { if (!i.closest('.cell')) i.src = i.dataset.src; });
+  hydrateCells(sl.querySelector('.carousel'));
   sl.querySelectorAll('.bg[data-bg]').forEach(b => { b.style.backgroundImage = `url('${b.dataset.bg}')`; });
   const v = sl.querySelector('video'); if (v && v.dataset.poster) v.poster = v.dataset.poster;
 }
@@ -510,9 +520,20 @@ function dehydrate(sl) {
     v.removeAttribute('poster');
   }
 }
+function hydrateCells(car) {
+  if (!car) return;
+  const idx = Math.round(car.scrollLeft / (car.clientWidth || 1));
+  [...car.children].forEach((c, k) => {
+    const i = c.querySelector('img[data-src]'), b = c.querySelector('.bg[data-bg]');
+    if (Math.abs(k - idx) <= 1) {
+      if (i && !i.getAttribute('src')) i.src = i.dataset.src;
+      if (b && !b.style.backgroundImage) b.style.backgroundImage = `url('${b.dataset.bg}')`;
+    } else if (cfg.lite && i?.getAttribute('src')) i.removeAttribute('src');
+  });
+}
 function window3(active) {
-  const kids = [...feed.children], i = kids.indexOf(active);
-  kids.forEach((sl, k) => { if (!sl.classList.contains('slide')) return; Math.abs(k - i) <= 2 ? hydrate(sl) : dehydrate(sl); });
+  const kids = [...feed.children], i = kids.indexOf(active), r = cfg.lite ? 1 : 2;
+  kids.forEach((sl, k) => { if (!sl.classList.contains('slide')) return; Math.abs(k - i) <= r ? hydrate(sl) : dehydrate(sl); });
 }
 
 function buildSlide(p, i) {
@@ -524,6 +545,11 @@ function buildSlide(p, i) {
     <div class="carousel">${m.imgs.map(u => `<div class="cell">${img(u.src, u.fb, u.tiny)}</div>`).join('')}</div>
     <div class="count">1/${m.imgs.length}</div>
     <button class="nav prev">‹</button><button class="nav next">›</button>`;
+  else if (m.type === 'video' && cfg.lite) media = `
+    <div class="media">
+      ${m.poster ? `<img data-src="${esc(m.poster)}" alt="" decoding="async">` : ''}
+      <a class="litevid" href="https://www.reddit.com${esc(p.permalink)}" target="_blank"><span>▶</span>Watch on Reddit</a>
+    </div>`;
   else if (m.type === 'video') media = `
     <div class="media">
       ${m.tiny ? `<div class="bg" data-bg="${esc(m.tiny)}"></div>` : ''}
@@ -574,7 +600,7 @@ function buildSlide(p, i) {
   const car = el.querySelector('.carousel');
   if (car) {
     const cnt = el.querySelector('.count'), n = m.imgs.length;
-    car.onscroll = () => { cnt.textContent = (Math.round(car.scrollLeft / car.clientWidth) + 1) + '/' + n; };
+    car.onscroll = () => { cnt.textContent = (Math.round(car.scrollLeft / car.clientWidth) + 1) + '/' + n; if (el._h) hydrateCells(car); };
     el.querySelector('.prev').onclick = () => car.scrollBy({ left: -car.clientWidth, behavior: 'smooth' });
     el.querySelector('.next').onclick = () => car.scrollBy({ left: car.clientWidth, behavior: 'smooth' });
   }
@@ -742,7 +768,7 @@ document.addEventListener('click', e => {
 function openDrawer() {
   $('#fsort').value = cfg.sort; $('#ft').value = cfg.t;
   $('#ffrom').value = cfg.from; $('#fto').value = cfg.to;
-  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe;
+  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite;
   $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
   $('#likesopen').textContent = `❤ My likes (${likes.length})`;
   $('#qon').checked = cfg.quizOn; $('#qevery').value = String(cfg.quizEvery); $('#qforce').checked = cfg.quizForce; renderQInfo();
@@ -785,7 +811,7 @@ $('#apply').onclick = () => {
   let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
   $('#ffrom').value = from; $('#fto').value = to;
   if (from && to && from > to) [from, to] = [to, from];
-  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked,
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked,
     quizOn: $('#qon').checked, quizEvery: +$('#qevery').value, quizForce: $('#qforce').checked });
   saveCfg(); updateDot();
   if (cfg.quizOn && !quiz) toast('Load a quiz file first');
