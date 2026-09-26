@@ -24,6 +24,7 @@
   #feed { height: 100%; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; }
   #feed::-webkit-scrollbar { display: none; }
   .slide { position: relative; height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden; background: #000; }
+  .msg small { font-size: 12px; color: #888; display: block; margin-top: 8px; line-height: 1.5; word-break: break-word; }
   .msg { height: 100dvh; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #bbb; line-height: 1.5; scroll-snap-align: start; }
 
   .media { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
@@ -208,6 +209,8 @@
     <h4>Performance</h4>
     <label><input type="checkbox" id="flite"> Lite mode: no videos, smaller images</label>
     <label><input type="checkbox" id="ftext"> Text-only mode: no images or videos</label>
+    <h4>Reddit app ID</h4>
+    <input id="fcid" placeholder="client id (optional)" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button class="sbtn" id="clearseen">Forget seen posts</button>
 
     <h4>Learning mode</h4>
@@ -262,7 +265,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
 };
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS, textOnly: false }, store.get('cfg', {}));
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS, textOnly: false, clientId: '' }, store.get('cfg', {}));
 { const s = new URLSearchParams(location.search), q = s.get('lite'), t = s.get('text'); if (q === '1' || q === '0') cfg.lite = q === '1'; if (t === '1' || t === '0') cfg.textOnly = t === '1'; }
 let pins = store.get('pins', []);
 let hist = store.get('hist', []);
@@ -308,31 +311,62 @@ function jsonp(url) {
     const cb = 'rcb_' + (++jsonpN) + '_' + Date.now();
     const s = document.createElement('script');
     const done = () => { delete window[cb]; s.remove(); clearTimeout(t); };
-    const t = setTimeout(() => { done(); reject(new Error('JSONP timeout')); }, 9000);
+    const t = setTimeout(() => { done(); reject(new Error('JSONP timeout')); }, 5000);
     window[cb] = d => { done(); resolve(d); };
     s.onerror = () => { done(); reject(new Error('JSONP error')); };
     s.src = url + (url.includes('?') ? '&' : '?') + 'jsonp=' + cb;
     document.head.appendChild(s);
   });
 }
-async function fetchJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
+async function fetchJSON(url, opts) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctl.signal });
+    const txt = await r.text();
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (/^\s*</.test(txt)) throw new Error('blocked (HTML page)');
+    return JSON.parse(txt);
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'timeout' : e.message);
+  } finally { clearTimeout(t); }
+}
+const host = (u, h) => u.replace('https://www.reddit.com', h);
+let tok = null, tokExp = 0;
+async function oauthGet(u) {
+  if (!cfg.clientId) throw new Error('no app id');
+  if (!tok || Date.now() > tokExp) {
+    let dev = store.get('dev', null);
+    if (!dev) { dev = [...crypto.getRandomValues(new Uint8Array(12))].map(b => b.toString(16).padStart(2, '0')).join(''); store.set('dev', dev); }
+    const d = await fetchJSON('https://www.reddit.com/api/v1/access_token', {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + btoa(cfg.clientId.trim() + ':'), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'https://oauth.reddit.com/grants/installed_client', device_id: dev }),
+    });
+    if (!d.access_token) throw new Error(d.error || 'no token');
+    tok = d.access_token; tokExp = Date.now() + (d.expires_in - 60) * 1000;
+  }
+  return fetchJSON(host(u, 'https://oauth.reddit.com').replace('.json?', '?'), { headers: { Authorization: 'Bearer ' + tok } });
 }
 const methods = [
-  u => fetchJSON(u),
-  u => jsonp(u),
-  u => fetchJSON('https://corsproxy.io/?url=' + encodeURIComponent(u)),
-  u => fetchJSON('https://api.allorigins.win/raw?url=' + encodeURIComponent(u)),
+  ['app', u => oauthGet(u)],
+  ['direct', u => fetchJSON(u)],
+  ['api', u => fetchJSON(host(u, 'https://api.reddit.com'))],
+  ['old', u => fetchJSON(host(u, 'https://old.reddit.com'))],
+  ['jsonp', u => jsonp(u)],
+  ['corsproxy', u => fetchJSON('https://corsproxy.io/?url=' + encodeURIComponent(u))],
+  ['allorigins', async u => { const d = await fetchJSON('https://api.allorigins.win/get?url=' + encodeURIComponent(u)); if (/^\s*</.test(d.contents || '')) throw new Error('blocked (HTML page)'); return JSON.parse(d.contents); }],
+  ['codetabs', u => fetchJSON('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u))],
 ];
-let best = 0;
+let best = null;
 async function getJSON(url, ok) {
-  let last;
-  for (const i of [best, 0, 1, 2, 3].filter((v, i, a) => a.indexOf(v) === i)) {
-    try { const d = await methods[i](url); if (ok(d)) { best = i; return d; } last = new Error('empty response'); } catch (e) { last = e; }
+  const order = methods.map((_, i) => i).filter(i => i !== 0 || cfg.clientId);
+  if (best != null) order.unshift(best);
+  const errs = [];
+  for (const i of [...new Set(order)]) {
+    try { const d = await methods[i][1](url); if (ok(d)) { best = i; return d; } errs.push(methods[i][0] + ': empty'); }
+    catch (e) { errs.push(methods[i][0] + ': ' + e.message); }
   }
-  throw last || new Error('no data');
+  throw new Error('Reddit did not respond.<br><small>' + errs.map(esc).join('<br>') + '</small>');
 }
 const R = (path, params = {}) => `https://www.reddit.com${path}.json?` + new URLSearchParams({ raw_json: '1', ...params });
 
@@ -432,7 +466,7 @@ async function loadMore() {
       if (!f.posts.length && !f.end) status(`Looking for matching posts… pages checked: ${pages}`);
     }
   } catch (e) {
-    if (!f.posts.length) status(`Error: ${esc(e.message)}<br>Check the name.`);
+    if (!f.posts.length) status(`${e.message.startsWith('Reddit') ? e.message : esc(e.message)}<br><br>Check the subreddit name.`);
     f.loading = false;
     return;
   }
@@ -714,7 +748,7 @@ async function openComments(permalink, title) {
   try {
     const d = await getJSON(R(permalink.replace(/\/$/, ''), { limit: '80', depth: '5', sort: 'top' }), d => Array.isArray(d) && d[1]?.data);
     set(renderComments(d[1].data.children) || '<div class="cmsg">No comments yet</div>');
-  } catch (e) { set(`<div class="cmsg">Couldn’t load: ${esc(e.message)}</div>`); }
+  } catch (e) { set(`<div class="cmsg">Couldn’t load. ${e.message.startsWith('Reddit') ? e.message : esc(e.message)}</div>`); }
 }
 
 async function openUser(name) {
@@ -775,7 +809,7 @@ document.addEventListener('click', e => {
 function openDrawer() {
   $('#fsort').value = cfg.sort; $('#ft').value = cfg.t;
   $('#ffrom').value = cfg.from; $('#fto').value = cfg.to;
-  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite; $('#ftext').checked = cfg.textOnly;
+  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite; $('#ftext').checked = cfg.textOnly; $('#fcid').value = cfg.clientId;
   $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
   $('#likesopen').textContent = `❤ My likes (${likes.length})`;
   $('#qon').checked = cfg.quizOn; $('#qevery').value = String(cfg.quizEvery); $('#qforce').checked = cfg.quizForce; renderQInfo();
@@ -818,9 +852,9 @@ $('#apply').onclick = () => {
   let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
   $('#ffrom').value = from; $('#fto').value = to;
   if (from && to && from > to) [from, to] = [to, from];
-  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked, textOnly: $('#ftext').checked,
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked, textOnly: $('#ftext').checked, clientId: $('#fcid').value.trim(),
     quizOn: $('#qon').checked, quizEvery: +$('#qevery').value, quizForce: $('#qforce').checked });
-  saveCfg(); updateDot();
+  saveCfg(); updateDot(); tok = null; best = null;
   if (cfg.quizOn && !quiz) toast('Load a quiz file first');
   openFeed(F ? { ...F.src } : { kind: 'sub', name: cfg.last });
 };
@@ -859,7 +893,7 @@ $('#rand').onclick = async () => {
     }
     const pool = popular.filter(s => s !== F?.src.name);
     openFeed({ kind: 'sub', name: pool[Math.random() * pool.length | 0] });
-  } catch (e) { toast('Didn’t work: ' + e.message); }
+  } catch (e) { toast('Didn’t work: Reddit did not respond'); }
   $('#rand').textContent = '🎲 Random subreddit';
 };
 
