@@ -45,6 +45,7 @@
   .textpost { position: absolute; inset: 0; padding: 80px 76px 150px 20px; display: flex; flex-direction: column; justify-content: center; background: linear-gradient(160deg, #1d3557, #3c1f55 60%, #5a1e3a); }
   .textpost h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.25; }
   .textpost .body { overflow-y: auto; white-space: pre-wrap; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+  .tbadge { align-self: flex-start; background: rgba(255,255,255,.14); color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 14px; margin-bottom: 14px; }
   .textpost .domain { margin-top: 10px; color: #9cd3ff; font-size: 14px; }
 
   .shade { position: absolute; left: 0; right: 0; bottom: 0; height: 45%; background: linear-gradient(transparent, rgba(0,0,0,.8)); pointer-events: none; }
@@ -206,6 +207,7 @@
 
     <h4>Performance</h4>
     <label><input type="checkbox" id="flite"> Lite mode: no videos, smaller images</label>
+    <label><input type="checkbox" id="ftext"> Text-only mode: no images or videos</label>
     <button class="sbtn" id="clearseen">Forget seen posts</button>
 
     <h4>Learning mode</h4>
@@ -260,8 +262,8 @@ const store = {
   set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
 };
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS }, store.get('cfg', {}));
-{ const q = new URLSearchParams(location.search).get('lite'); if (q === '1' || q === '0') cfg.lite = q === '1'; }
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS, textOnly: false }, store.get('cfg', {}));
+{ const s = new URLSearchParams(location.search), q = s.get('lite'), t = s.get('text'); if (q === '1' || q === '0') cfg.lite = q === '1'; if (t === '1' || t === '0') cfg.textOnly = t === '1'; }
 let pins = store.get('pins', []);
 let hist = store.get('hist', []);
 let seen = new Set(store.get('seen', []));
@@ -538,7 +540,11 @@ function window3(active) {
 
 function buildSlide(p, i) {
   p.title = un(p.title); p.selftext = un(p.selftext);
-  const m = mediaOf(p);
+  let m = mediaOf(p);
+  if (cfg.textOnly && m.type !== 'text') {
+    const label = m.type === 'video' ? '🎞 Video' : m.type === 'gallery' ? `🖼 Gallery · ${m.imgs.length}` : '📷 Photo';
+    m = { type: 'text', badge: label, link: m.link, domain: p.domain };
+  }
   let media;
   if (m.type === 'image') media = `<div class="media">${img(m.src, m.fb, m.tiny)}</div>`;
   else if (m.type === 'gallery') media = `
@@ -559,6 +565,7 @@ function buildSlide(p, i) {
     </div><div class="prog"></div>`;
   else media = `
     <div class="textpost">
+      ${m.badge ? `<a class="tbadge" href="https://www.reddit.com${esc(p.permalink)}" target="_blank">${m.badge} · open on Reddit</a>` : ''}
       ${p.selftext ? `<div class="body">${esc(p.selftext)}</div>` : `<h2>${esc(p.title)}</h2>`}
       ${m.link ? `<a class="domain" href="${esc(m.link)}" target="_blank">🔗 ${esc(m.domain)}</a>` : ''}
     </div>`;
@@ -725,7 +732,7 @@ async function openUser(name) {
   for (const p of P) (where[p.subreddit] ??= { p: 0, c: 0 }).p++;
   for (const c of C) (where[c.subreddit] ??= { p: 0, c: 0 }).c++;
   const rows = Object.entries(where).sort((x, y) => (y[1].p + y[1].c) - (x[1].p + x[1].c));
-  const avatar = un(a.snoovatar_img || a.icon_img || '');
+  const avatar = cfg.textOnly ? '' : un(a.snoovatar_img || a.icon_img || '');
   const more = n => n >= 100 ? '100+' : n;
   set(`
     <div class="prof">
@@ -768,7 +775,7 @@ document.addEventListener('click', e => {
 function openDrawer() {
   $('#fsort').value = cfg.sort; $('#ft').value = cfg.t;
   $('#ffrom').value = cfg.from; $('#fto').value = cfg.to;
-  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite;
+  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite; $('#ftext').checked = cfg.textOnly;
   $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
   $('#likesopen').textContent = `❤ My likes (${likes.length})`;
   $('#qon').checked = cfg.quizOn; $('#qevery').value = String(cfg.quizEvery); $('#qforce').checked = cfg.quizForce; renderQInfo();
@@ -777,7 +784,7 @@ function openDrawer() {
 }
 function closeDrawer() { $('#drawer').classList.remove('show'); $('#dover').classList.remove('show'); }
 function syncT() { const s = $('#fsort').value; $('#ft').disabled = !['top', 'controversial'].includes(s); }
-function updateDot() { $('#fdot').classList.toggle('show', !!(cfg.from || cfg.to || cfg.hideSeen || cfg.sort === 'random')); }
+function updateDot() { $('#fdot').classList.toggle('show', !!(cfg.from || cfg.to || cfg.hideSeen || cfg.sort === 'random' || cfg.textOnly)); }
 $('#menu').onclick = openDrawer;
 $('#likesopen').onclick = () => openFeed({ kind: 'likes' });
 $('#dclose').onclick = closeDrawer;
@@ -811,7 +818,7 @@ $('#apply').onclick = () => {
   let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
   $('#ffrom').value = from; $('#fto').value = to;
   if (from && to && from > to) [from, to] = [to, from];
-  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked,
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked, textOnly: $('#ftext').checked,
     quizOn: $('#qon').checked, quizEvery: +$('#qevery').value, quizForce: $('#qforce').checked });
   saveCfg(); updateDot();
   if (cfg.quizOn && !quiz) toast('Load a quiz file first');
@@ -1006,7 +1013,7 @@ function buildQuiz(q) {
   el.className = 'slide quiz';
   el.innerHTML = `<div class="qcard">
     <div class="qhead">🧠 ${esc(quiz.title)}</div>
-    ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="">` : ''}
+    ${q.image && !cfg.textOnly ? `<img class="qimg" src="${esc(q.image)}" alt="">` : ''}
     <div class="qq">${esc(q.question)}</div>
     <div class="qbody"></div>
     <div class="qres" hidden></div>
