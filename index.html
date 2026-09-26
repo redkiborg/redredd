@@ -211,6 +211,8 @@
     <label><input type="checkbox" id="ftext"> Text-only mode: no images or videos</label>
     <h4>Reddit app ID</h4>
     <input id="fcid" placeholder="client id (optional)" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <h4>Own proxy URL</h4>
+    <input id="fproxy" placeholder="https://….workers.dev (optional)" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button class="sbtn" id="clearseen">Forget seen posts</button>
 
     <h4>Learning mode</h4>
@@ -264,9 +266,10 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('rf_' + k); return v ? JSON.parse(v) : d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem('rf_' + k, JSON.stringify(v)); } catch {} },
 };
+const DEFAULT_PROXY = 'https://fancy-brook-2793.anton-lugantsev.workers.dev';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS, textOnly: false, clientId: '' }, store.get('cfg', {}));
-{ const s = new URLSearchParams(location.search), q = s.get('lite'), t = s.get('text'); if (q === '1' || q === '0') cfg.lite = q === '1'; if (t === '1' || t === '0') cfg.textOnly = t === '1'; }
+const cfg = Object.assign({ sort: 'hot', t: 'week', from: '', to: '', hideSeen: false, dedupe: true, last: 'aww', quizOn: false, quizEvery: 10, quizForce: true, lite: IS_IOS, textOnly: false, clientId: '', proxy: '' }, store.get('cfg', {}));
+{ const s = new URLSearchParams(location.search), q = s.get('lite'), t = s.get('text'), px = s.get('proxy'); if (px) cfg.proxy = px; if (q === '1' || q === '0') cfg.lite = q === '1'; if (t === '1' || t === '0') cfg.textOnly = t === '1'; }
 let pins = store.get('pins', []);
 let hist = store.get('hist', []);
 let seen = new Set(store.get('seen', []));
@@ -348,8 +351,10 @@ async function oauthGet(u) {
   return fetchJSON(host(u, 'https://oauth.reddit.com').replace('.json?', '?'), { headers: { Authorization: 'Bearer ' + tok } });
 }
 const methods = [
+  ['myproxy', u => fetchJSON((cfg.proxy || DEFAULT_PROXY).replace(/\/?$/, '/') + '?url=' + encodeURIComponent(u))],
   ['app', u => oauthGet(u)],
   ['direct', u => fetchJSON(u)],
+  ['cookies', u => fetchJSON(u, { credentials: 'include' })],
   ['api', u => fetchJSON(host(u, 'https://api.reddit.com'))],
   ['old', u => fetchJSON(host(u, 'https://old.reddit.com'))],
   ['jsonp', u => jsonp(u)],
@@ -358,13 +363,20 @@ const methods = [
 ];
 let best = null;
 async function getJSON(url, ok) {
-  const order = methods.map((_, i) => i).filter(i => i !== 0 || cfg.clientId);
+  const order = methods.map((_, i) => i).filter(i => (methods[i][0] !== 'app' || cfg.clientId) && (methods[i][0] !== 'myproxy' || cfg.proxy || DEFAULT_PROXY));
   if (best != null) order.unshift(best);
   const errs = [];
   for (const i of [...new Set(order)]) {
     try { const d = await methods[i][1](url); if (ok(d)) { best = i; return d; } errs.push(methods[i][0] + ': empty'); }
     catch (e) { errs.push(methods[i][0] + ': ' + e.message); }
   }
+  const probe = async () => {
+    const a = await fetch(url, { mode: 'no-cors' }).then(() => 'reachable').catch(e => 'unreachable (' + e.message + ')');
+    const b = await fetch(url, { redirect: 'manual' }).then(r => r.type + ' ' + r.status).catch(e => e.message);
+    return `probe: ${a} · manual: ${b}`;
+  };
+  errs.push(await probe().catch(e => 'probe: ' + e.message));
+  errs.push('ua: ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 90));
   throw new Error('Reddit did not respond.<br><small>' + errs.map(esc).join('<br>') + '</small>');
 }
 const R = (path, params = {}) => `https://www.reddit.com${path}.json?` + new URLSearchParams({ raw_json: '1', ...params });
@@ -808,7 +820,7 @@ document.addEventListener('click', e => {
 function openDrawer() {
   $('#fsort').value = cfg.sort; $('#ft').value = cfg.t;
   $('#ffrom').value = cfg.from; $('#fto').value = cfg.to;
-  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite; $('#ftext').checked = cfg.textOnly; $('#fcid').value = cfg.clientId;
+  $('#fseen').checked = cfg.hideSeen; $('#fdup').checked = cfg.dedupe; $('#flite').checked = cfg.lite; $('#ftext').checked = cfg.textOnly; $('#fcid').value = cfg.clientId; $('#fproxy').value = cfg.proxy;
   $('#clearseen').textContent = `Forget seen posts (${seen.size})`;
   $('#likesopen').textContent = `❤ My likes (${likes.length})`;
   $('#qon').checked = cfg.quizOn; $('#qevery').value = String(cfg.quizEvery); $('#qforce').checked = cfg.quizForce; renderQInfo();
@@ -851,7 +863,7 @@ $('#apply').onclick = () => {
   let from = parseDate($('#ffrom').value), to = parseDate($('#fto').value);
   $('#ffrom').value = from; $('#fto').value = to;
   if (from && to && from > to) [from, to] = [to, from];
-  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked, textOnly: $('#ftext').checked, clientId: $('#fcid').value.trim(),
+  Object.assign(cfg, { sort: $('#fsort').value, t: $('#ft').value, from, to, hideSeen: $('#fseen').checked, dedupe: $('#fdup').checked, lite: $('#flite').checked, textOnly: $('#ftext').checked, clientId: $('#fcid').value.trim(), proxy: $('#fproxy').value.trim(),
     quizOn: $('#qon').checked, quizEvery: +$('#qevery').value, quizForce: $('#qforce').checked });
   saveCfg(); updateDot(); tok = null; best = null;
   if (cfg.quizOn && !quiz) toast('Load a quiz file first');
